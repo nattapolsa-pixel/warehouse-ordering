@@ -1,0 +1,273 @@
+{
+    "name":  "Warehouse Ordering - Order Submitted Webhook",
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "warehouse-order-submitted",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "b8cde24e-1b6d-4fd2-bc13-warehouse-webhook",
+                      "name":  "Warehouse Order Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       -820,
+                                       0
+                                   ],
+                      "webhookId":  "warehouse-order-submitted"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const SHARED_SECRET = \u0027b7472f1c848df4212df932a172927a96717898d28a5917d3b3131725e1c4100f\u0027;\nconst headers = $json.headers || {};\nconst body = $json.body || $json;\nconst incomingSecret = headers[\u0027x-warehouse-secret\u0027] || headers[\u0027X-Warehouse-Secret\u0027] || \u0027\u0027;\n\nif (incomingSecret !== SHARED_SECRET) {\n  return [{\n    json: {\n      ok: false,\n      authorized: false,\n      statusCode: 401,\n      message: \u0027Invalid X-Warehouse-Secret\u0027\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ok: true,\n    authorized: true,\n    receivedAt: new Date().toISOString(),\n    order: body,\n    flags: body.flags || {},\n    totals: body.totals || {},\n    branch: body.branch || {},\n    items: body.items || []\n  }\n}];"
+                                     },
+                      "id":  "6f8cbe07-8b95-44d6-verify-secret",
+                      "name":  "Verify Secret + Normalize",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       -580,
+                                       0
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "authorized-check",
+                                                                                   "leftValue":  "={{ $json.authorized }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true",
+                                                                                                    "singleValue":  true
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "1c035cf3-0c88-4fa1-authorized-if",
+                      "name":  "Authorized?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       -340,
+                                       0
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const order = $json.order || {};\nconst branch = order.branch || {};\nconst totals = order.totals || {};\nconst cycle = order.cycle || {};\nconst items = order.items || [];\nconst lines = items.slice(0, 12).map(item =\u003e {\n  return `• ${item.itemCode} ${item.itemName || \u0027\u0027} x ${item.qty}${item.uom ? \u0027 \u0027 + item.uom : \u0027\u0027}`;\n});\nconst extra = items.length \u003e 12 ? `\\n...และอีก ${items.length - 12} รายการ` : \u0027\u0027;\nconst alertReasons = [];\nif (totals.isOutOfCycle) alertReasons.push(\u0027ไม่ใช่รอบสั่งของสาขา\u0027);\nif (totals.missingMasterCount \u003e 0) alertReasons.push(`มีสินค้าไม่พบ Master ${totals.missingMasterCount} รายการ`);\n\nreturn [{\n  json: {\n    order,\n    shouldAlertAdmin: !!(order.flags \u0026\u0026 order.flags.shouldAlertAdmin),\n    isOutOfCycle: !!totals.isOutOfCycle,\n    hasMissingMasterItem: !!(order.flags \u0026\u0026 order.flags.hasMissingMasterItem),\n    subject: `[${order.owner}] New Order ${order.documentNo} - ${branch.code || \u0027\u0027}`,\n    branchSummary: `${branch.code || \u0027\u0027} ${branch.name || \u0027\u0027}`.trim(),\n    alertReasons,\n    message: [\n      `New warehouse order: ${order.documentNo}`,\n      `Owner: ${order.ownerLabel || order.owner || \u0027-\u0027}`,\n      `Branch: ${branch.code || \u0027-\u0027} ${branch.name || \u0027\u0027}`,\n      `Province: ${branch.province || \u0027-\u0027}`,\n      `Cycle: ${cycle.status || \u0027-\u0027}`,\n      `Items: ${totals.itemCount || items.length} | Total Qty: ${totals.totalQty || 0}`,\n      alertReasons.length ? `Alert: ${alertReasons.join(\u0027, \u0027)}` : \u0027Alert: -\u0027,\n      \u0027\u0027,\n      lines.join(\u0027\\n\u0027) + extra\n    ].join(\u0027\\n\u0027)\n  }\n}];"
+                                     },
+                      "id":  "2f9a42e4-0057-4b87-build-message",
+                      "name":  "Build Notification Message",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       -100,
+                                       -120
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "alert-check",
+                                                                                   "leftValue":  "={{ $json.shouldAlertAdmin }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true",
+                                                                                                    "singleValue":  true
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "6760d879-44df-41d8-alert-if",
+                      "name":  "Needs Admin Alert?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       140,
+                                       -120
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "// TODO: ต่อ node จริงที่ต้องการหลังจาก node นี้ เช่น LINE, Gmail, Microsoft Teams, Slack หรือ HTTP Request\n// ใช้ fields พร้อมแล้ว: $json.subject, $json.message, $json.order, $json.alertReasons\nreturn [{\n  json: {\n    ...$json,\n    nextStep: \u0027Connect this branch to LINE/Email/Teams for urgent admin alerts\u0027\n  }\n}];"
+                                     },
+                      "id":  "d583e58a-60f7-494f-admin-alert-placeholder",
+                      "name":  "TODO Admin Alert Channel",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       390,
+                                       -240
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "// TODO: ต่อ node แจ้งกลับสาขา เช่น Email ยืนยันรับ order\nreturn [{\n  json: {\n    ...$json,\n    nextStep: \u0027Connect this branch to branch confirmation email/message\u0027\n  }\n}];"
+                                     },
+                      "id":  "8f9f78f8-450a-4b35-branch-confirm-placeholder",
+                      "name":  "TODO Branch Confirmation",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       390,
+                                       -20
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ { ok: true, message: \"Warehouse order received by n8n\", documentNo: $json.order.documentNo } }}",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "id":  "91c9e5e9-8dbe-4e39-ok-response",
+                      "name":  "Respond OK",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       660,
+                                       -120
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ { ok: false, message: $json.message || \"Unauthorized\" } }}",
+                                         "options":  {
+                                                         "responseCode":  401
+                                                     }
+                                     },
+                      "id":  "e5bfc0b9-2e23-4766-unauthorized-response",
+                      "name":  "Respond Unauthorized",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       -100,
+                                       160
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Warehouse Order Webhook":  {
+                                                        "main":  [
+                                                                     {
+                                                                         "node":  "Verify Secret + Normalize",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                    },
+                        "Verify Secret + Normalize":  {
+                                                          "main":  [
+                                                                       {
+                                                                           "node":  "Authorized?",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                      },
+                        "Authorized?":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Build Notification Message",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ],
+                                                         [
+                                                             {
+                                                                 "node":  "Respond Unauthorized",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Build Notification Message":  {
+                                                           "main":  [
+                                                                        {
+                                                                            "node":  "Needs Admin Alert?",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                       },
+                        "Needs Admin Alert?":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "TODO Admin Alert Channel",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ],
+                                                                [
+                                                                    {
+                                                                        "node":  "TODO Branch Confirmation",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "TODO Admin Alert Channel":  {
+                                                         "main":  [
+                                                                      {
+                                                                          "node":  "Respond OK",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                     },
+                        "TODO Branch Confirmation":  {
+                                                         "main":  [
+                                                                      {
+                                                                          "node":  "Respond OK",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                     }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1"
+                 },
+    "staticData":  null,
+    "tags":  [
+
+             ],
+    "triggerCount":  0,
+    "updatedAt":  "2026-05-25T00:00:00.000Z",
+    "versionId":  "warehouse-order-submitted-template-v1"
+}

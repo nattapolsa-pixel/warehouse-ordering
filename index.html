@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Warehouse Ordering System</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="fx-bg" aria-hidden="true">
+    <div class="fx-grid"></div>
+    <div class="fx-orb one"></div>
+    <div class="fx-orb two"></div>
+    <div class="fx-orb three"></div>
+  </div>
+  
+  <div id="globalClock" class="global-clock" style="display: none;"></div>
+
+  <div id="sideNav"></div>
+  <div id="mobileNav"></div>
+  <div id="mobileDrawer"></div>
+
+  <section id="home" class="section active">
+    <div class="home-page">
+      <header class="hero">
+        <div class="hero-row">
+          <div>
+            <div class="pill logo-pill"><img src="pt_dcwn_logo.png" alt="PT DCWN Logo" class="pill-logo-img"> Warehouse Ordering System</div>
+            <h1 style="margin-top:14px;">เลือก Owner เพื่อสั่งสินค้า</h1>
+            <p>หน้าแรกสำหรับสาขา เลือกแบรนด์แล้วเริ่มกรอกข้อมูลได้ทันที</p>
+          </div>
+        </div>
+      </header>
+
+      <div class="owner-grid">
+        <article class="app-card owner-select pun" onclick="selectOwner('PUN')">
+          <div class="inner">
+            <div class="owner-top">
+              <div class="big-icon brand-logo-wrap"><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div>
+              <div class="round-arrow">→</div>
+            </div>
+            <div class="owner-title">
+              <div class="sub">PUN Owner</div>
+              <h2>Punthai</h2>
+              <div class="owner-note">
+                <div class="stripe"></div>
+                <div class="text">เริ่มสั่งสินค้า / ตรวจรอบสั่ง / ดึง Master อัตโนมัติ</div>
+              </div>
+            </div>
+          </div>
+          <div class="colorbar"><div class="pun-primary"></div><div class="pun-accent"></div></div>
+        </article>
+
+        <article class="app-card owner-select coffee" onclick="selectOwner('GFA')">
+          <div class="inner">
+            <div class="owner-top">
+              <div class="big-icon brand-logo-wrap"><img src="https://i.postimg.cc/8zd22nWx/LOGO-COFFEEWORLD.png" alt="Coffee World Logo" loading="eager"></div>
+              <div class="round-arrow">→</div>
+            </div>
+            <div class="owner-title">
+              <div class="sub">GFA Owner</div>
+              <h2>Coffee World</h2>
+              <div class="owner-note coffee">
+                <div class="stripe"></div>
+                <div class="text">เริ่มสั่งสินค้า / ตรวจรอบสั่ง / ดึง Master อัตโนมัติ</div>
+              </div>
+            </div>
+          </div>
+          <div class="colorbar"><div class="coffee-primary"></div><div class="coffee-accent"></div></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="portal" class="section">
+    <div class="page">
+      <header class="portal-header">
+        <div class="header-row">
+          <div class="header-left">
+            <button class="back-square" onclick="openSection('home')">←</button>
+            <div class="owner-icon brand-logo-wrap" data-owner-icon><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div>
+            <div class="portal-title">
+              <h2 id="portalTitle">Punthai Order Portal</h2>
+              <p id="portalSubtitle">Punthai</p>
+            </div>
+          </div>
+          <div class="sheet-pill" id="portalSheet">สาขาสั่งสินค้า_Pun</div>
+        </div>
+      </header>
+
+      <div class="user-choice-grid" data-user-only>
+        <article class="app-card user-choice-card order-choice" onclick="startOrder(currentOwnerKey)">
+          <div class="choice-mark">01</div>
+          <div class="choice-content">
+            <div class="choice-icon">＋</div>
+            <div>
+              <div class="choice-kicker">สร้างคำสั่งซื้อใหม่</div>
+              <h2>ฟอร์มสั่งสินค้า</h2>
+              <p>กรอกรหัสสาขา เลือกรายการสินค้า และบันทึกคำสั่งซื้อเข้า Sheet อัตโนมัติ</p>
+            </div>
+          </div>
+          <div class="choice-footer">
+            <span>เริ่มกรอกฟอร์ม</span>
+            <div class="round-arrow">→</div>
+          </div>
+        </article>
+
+        <article class="app-card user-choice-card check-choice" onclick="openSelfService('cycle')">
+          <div class="choice-mark">02</div>
+          <div class="choice-content">
+            <div class="choice-icon">✓</div>
+            <div>
+              <div class="choice-kicker">ตรวจข้อมูลของสาขา</div>
+              <h2>ตรวจรอบสั่ง</h2>
+              <p>ค้นหารหัสสาขาเพื่อดูว่าสาขาของคุณมีรอบสั่งวันไหนบ้าง</p>
+            </div>
+          </div>
+          <div class="choice-footer">
+            <span>ตรวจสอบข้อมูล</span>
+            <div class="round-arrow">→</div>
+          </div>
+        </article>
+
+        <article class="app-card user-choice-card check-choice" onclick="openSection('trackOrder')">
+          <div class="choice-mark">03</div>
+          <div class="choice-content">
+            <div class="choice-icon">📦</div>
+            <div>
+              <div class="choice-kicker">ติดตามสถานะคำสั่งซื้อ</div>
+              <h2>ตรวจสอบคำสั่งซื้อ</h2>
+              <p>ค้นหารหัสสาขาเพื่อดูประวัติและสถานะคำสั่งซื้อล่าสุดของสาขา</p>
+            </div>
+          </div>
+          <div class="choice-footer">
+            <span>ดูประวัติ</span>
+            <div class="round-arrow">→</div>
+          </div>
+        </article>
+      </div>
+
+      <div class="user-menu-note" data-user-only>
+        <div class="mini-stat"><b id="userMenuOwner">PUN</b><span>Owner ที่เลือก</span></div>
+        <div class="mini-stat"><b>Master</b><span>ดึงรอบสั่งสาขา</span></div>
+        <div class="mini-stat"><b>Cycle</b><span>ดูรอบสั่งของสาขา</span></div>
+      </div>
+
+      <div class="portal-grid" data-admin-hub>
+        <article class="app-card main-action">
+          <div class="card-pad action-row">
+            <div>
+              <div class="pill" style="background:var(--owner-soft); color:var(--owner);">📄 Main Action</div>
+              <h2 style="margin-top:12px;">ฟอร์มสั่งสินค้า</h2>
+              <p>กรอกข้อมูลสาขาและรายการสินค้า ระบบช่วยดึงข้อมูลให้อัตโนมัติ</p>
+            </div>
+            <button class="btn big" onclick="startOrder(currentOwnerKey)">
+              <span>เริ่มกรอกฟอร์ม →</span>
+              <i></i>
+            </button>
+          </div>
+          <div class="info-row">
+            <div class="info-block"><div class="label">Owner</div><b id="portalOwnerName">Punthai</b></div>
+            <div class="info-block"><div class="label">Brand</div><b id="portalComp">Punthai</b></div>
+            <div class="info-block"><div class="label">Status</div><b class="ok-text">พร้อมใช้งาน</b></div>
+          </div>
+        </article>
+
+        <article class="app-card card-pad">
+          <div class="header-row" style="align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div class="sub" style="color:#94a3b8; font-weight:900;">Quick Status</div>
+              <h3 id="portalSummaryTitle" style="font-size:26px; margin-top:4px;">ภาพรวมวันนี้</h3>
+            </div>
+            <div style="display:flex; align-items:center; gap:12px;">
+              <input type="date" id="portalSummaryDate" class="portal-date-filter" onchange="loadPortalSummary()">
+              <div class="owner-icon brand-logo-wrap small-logo" data-owner-icon style="width:48px;height:48px;background:#fff;color:var(--owner);margin-top:0;"><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div>
+            </div>
+          </div>
+          <div class="quick-grid">
+            <div class="mini-stat">
+              <b id="portalDocCount">0</b>
+              <span>ออร์เดอร์วันนี้</span>
+            </div>
+            <div class="mini-stat">
+              <b id="portalRowCount">0</b>
+              <span>รายการสินค้าวันนี้</span>
+            </div>
+            <div class="mini-stat">
+              <b id="portalQtyCount">0</b>
+              <span>จำนวนชิ้นรวมวันนี้</span>
+            </div>
+            <div class="mini-stat">
+              <b id="portalBranchCount">0</b>
+              <span>สาขาที่สั่งวันนี้</span>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="menu-grid">
+        <article class="app-card menu-card" onclick="startOrder(currentOwnerKey)">
+          <div class="menu-icon-row"><div class="menu-icon">📝</div><div class="round-arrow" style="width:40px;height:40px;font-size:18px;">→</div></div>
+          <h3>แบบฟอร์ม</h3><p>กรอกคำสั่งซื้อหลายรายการในเอกสารเดียว</p>
+        </article>
+        <article class="app-card menu-card" onclick="openSelfService('cycle')">
+          <div class="menu-icon-row"><div class="menu-icon">⌕</div><div class="round-arrow" style="width:40px;height:40px;font-size:18px;">→</div></div>
+          <h3>ค้นหารอบสั่ง</h3><p>ค้นหารหัสสาขาเพื่อดูวันรอบสั่งของสาขานั้น</p>
+        </article>
+        <article class="app-card menu-card" onclick="openSection('trackOrder')">
+          <div class="menu-icon-row"><div class="menu-icon">📦</div><div class="round-arrow" style="width:40px;height:40px;font-size:18px;">→</div></div>
+          <h3>ตรวจสอบคำสั่งซื้อ</h3><p>ติดตามสถานะและประวัติการสั่งสินค้าของสาขา</p>
+        </article>
+        <article class="app-card menu-card" data-admin-only onclick="openOwnerSection('master')">
+          <div class="menu-icon-row"><div class="menu-icon">🧩</div><div class="round-arrow" style="width:40px;height:40px;font-size:18px;">→</div></div>
+          <h3>Master Item</h3><p>เพิ่ม แก้ไข ค้นหาสินค้า</p>
+        </article>
+        <article class="app-card menu-card" data-admin-only onclick="openOwnerSection('dashboard')">
+          <div class="menu-icon-row"><div class="menu-icon">📊</div><div class="round-arrow" style="width:40px;height:40px;font-size:18px;">→</div></div>
+          <h3>Dashboard</h3><p>ดูรายงานย้อนหลัง</p>
+        </article>
+        <article class="app-card menu-card" data-admin-only onclick="openOwnerSection('export')">
+          <div class="menu-icon-row"><div class="menu-icon">⬇</div><div class="round-arrow" style="width:40px;height:40px;font-size:18px;">→</div></div>
+          <h3>Export รอบสั่ง</h3><p>เลือกวันที่รอบสั่ง แล้วโหลดไฟล์พร้อมนำเข้า</p>
+        </article>
+        <article class="app-card menu-card" data-admin-only onclick="openOwnerSection('logs')">
+          <div class="menu-icon-row"><div class="menu-icon">🕘</div><div class="round-arrow" style="width:40px;height:40px;font-size:18px;">→</div></div>
+          <h3>Activity Log</h3><p>ตรวจสอบประวัติการบันทึก</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="order" class="section">
+    <div class="page">
+      <header class="portal-header">
+        <div class="header-row">
+          <div class="header-left">
+            <button class="back-square" onclick="goBackPortal()">←</button>
+            <div class="owner-icon brand-logo-wrap" data-owner-icon><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div>
+            <div class="portal-title">
+              <h2 id="orderTitle">ฟอร์มสั่งสินค้า</h2>
+              <p id="orderSubtitle">กรอกข้อมูลสาขาและรายการสินค้า</p>
+            </div>
+          </div>
+          <div class="top-actions">
+            <button class="btn" onclick="openSection('home')">← กลับหน้าแรก</button>
+            <button class="btn" onclick="openSelfService('cycle')">ตรวจรอบสั่ง</button>
+            <button class="btn primary" onclick="submitOrder()">บันทึกคำสั่งสินค้า</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="card card-pad" style="margin-bottom:18px;">
+        <div class="form-grid">
+          <div class="field">
+            <label>วันที่สั่ง</label>
+            <input type="date" id="orderDate" onchange="validateContext()">
+            <div class="helper">เลือกวันที่ได้ ระบบจะบันทึกเวลาที่กดส่งเพิ่มให้</div>
+          </div>
+          <div class="field"><label>Owner</label><input type="text" id="owner" readonly></div>
+          <input type="hidden" id="compCode">
+          <div class="field">
+            <label>รหัสสาขา</label>
+            <div class="branch-search">
+              <input type="text" id="branchCode" placeholder="พิมพ์รหัส / ชื่อสาขา / จังหวัด แล้วเลือกสาขา" autocomplete="off">
+              <div class="branch-suggestions" id="branchSuggestions" role="listbox"></div>
+            </div>
+            <div class="helper">ค้นหาจาก Master_Pun&GFA หรือพิมพ์ชื่อสาขาเพื่อเลือกได้</div>
+          </div>
+          <div class="field span-2"><label>ชื่อสาขา</label><input type="text" id="branchName" readonly placeholder="ระบบจะดึงชื่อสาขาให้อัตโนมัติ"></div>
+          <div class="field"><label>E-mail สาขา</label><input type="email" id="branchEmail" placeholder="เช่น branch@email.com"><div class="helper">ระบบจะเติมจาก Master ถ้ามีหัวคอลัมน์ Email</div></div>
+          <div class="field"><label>จังหวัด</label><input type="text" id="branchZone" placeholder="เช่น กรุงเทพฯ / นนทบุรี"><div class="helper">ระบบจะเติมจาก Master_Pun&GFA Column D ตามรหัสสาขา</div></div>
+          <div class="field"><label>เลขที่เอกสาร</label><input type="text" id="documentNo" readonly placeholder="GQ-รหัสสาขา-TYYMMDD"></div>
+          <div class="field"><label>ตรวจสอบรอบสั่ง</label><input type="text" id="cycleStatus" class="cycle-status empty" readonly><div class="helper" id="cycleHelper"></div></div>
+        </div>
+      </div>
+
+      <div class="order-health-panel" aria-live="polite">
+        <div class="health-head">
+          <div>
+            <div class="health-label">ความพร้อมคำสั่งซื้อ</div>
+            <h3 id="orderReadinessTitle">พร้อมเริ่มกรอกคำสั่งซื้อ</h3>
+          </div>
+          <div class="health-score" id="orderReadinessScore">0%</div>
+        </div>
+        <div class="health-progress" aria-hidden="true"><span id="orderProgressFill"></span></div>
+        <div class="health-grid">
+          <div class="health-chip" id="healthBranchChip"><b id="healthBranch">ยังไม่เลือก</b><span>สาขา</span></div>
+          <div class="health-chip"><b id="healthRows">0</b><span>รายการ</span></div>
+          <div class="health-chip"><b id="healthQty">0</b><span>จำนวนรวม</span></div>
+          <div class="health-chip warn" id="healthIssuesChip"><b id="healthIssues">0</b><span>ต้องเช็ก</span></div>
+        </div>
+      </div>
+
+      <div class="card card-pad">
+        <div class="topbar">
+          <div class="page-title">
+            <h2 style="font-size:24px;">รายการสินค้า</h2>
+            <p>ค้นจากรหัสหรือชื่อสินค้า แล้วระบบเติมข้อมูลจาก Master Item ตาม Owner</p>
+          </div>
+          <div class="top-actions">
+            <button class="btn" onclick="addItemRow()">＋ เพิ่มแถว</button>
+            <button class="btn" onclick="pasteItemRows()">📋 วางจาก Excel</button>
+            <button class="btn" onclick="mergeDuplicateItems()">รวมรายการซ้ำ</button>
+            <button class="btn" onclick="loadLatestBranchOrder()">ดึงรายการล่าสุด</button>
+          </div>
+        </div>
+        <div class="item-sheet-summary" aria-live="polite">
+          <div class="summary-chip"><span>รายการ</span><b id="itemSummaryRows">0</b></div>
+          <div class="summary-chip"><span>จำนวนรวม</span><b id="itemSummaryQty">0</b></div>
+          <div class="summary-chip warn"><span>ต้องเช็ก</span><b id="itemSummaryIssues">0</b></div>
+        </div>
+        <div class="table-wrap item-sheet-wrap">
+          <table class="spreadsheet-table">
+            <thead><tr><th style="width:64px;">No.</th><th style="width:280px;">รหัส / ชื่อสินค้า</th><th style="width:330px;">ชื่อ Item</th><th style="width:180px;">ขนาดรรจุ</th><th style="width:110px;">UOM</th><th style="width:130px;">จำนวน</th><th style="width:240px;">หมายเหตุ</th><th style="width:70px;"></th></tr></thead>
+            <tbody id="itemBody"></tbody>
+          </table>
+        </div>
+      </div>
+      
+      <!-- Floating Action Bar for Quick Save -->
+      <div class="order-floating-bar" id="orderFloatingBar">
+        <div class="floating-left">
+          <div class="floating-score-wrap">
+            <span class="floating-score" id="floatReadinessScore">0%</span>
+            <span class="floating-score-label">ความพร้อม</span>
+          </div>
+          <div class="floating-divider"></div>
+          <div class="floating-stats">
+            <div class="floating-stat-item">
+              <span class="floating-stat-num" id="floatSummaryRows">0</span>
+              <span class="floating-stat-lbl">รายการ</span>
+            </div>
+            <div class="floating-stat-item">
+              <span class="floating-stat-num" id="floatSummaryQty">0</span>
+              <span class="floating-stat-lbl">จำนวนรวม</span>
+            </div>
+          </div>
+        </div>
+        <div class="floating-right">
+          <button class="btn-circle scroll-top-btn" onclick="window.scrollTo({top: 0, behavior: 'smooth'})" title="เลื่อนขึ้นบน">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+          </button>
+          <button class="btn primary floating-save-btn" onclick="submitOrder()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px; vertical-align:middle; display:inline-block;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            บันทึกคำสั่งสินค้า
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="selfService" class="section">
+    <div class="page">
+      <header class="portal-header">
+        <div class="header-row">
+          <div class="header-left">
+            <button class="back-square" onclick="openSection('portal')">←</button>
+            <div class="owner-icon brand-logo-wrap" data-owner-icon><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div>
+            <div class="portal-title">
+              <h2 id="selfTitle">ตรวจรอบสั่งของสาขา</h2>
+              <p id="selfSubtitle">ค้นหารหัสสาขาเพื่อดูวันรอบสั่งจาก Master_Pun&GFA</p>
+            </div>
+          </div>
+          <div class="top-actions">
+            <button class="btn" onclick="openSection('portal')">กลับหน้าเมนู</button>
+            <button class="btn" onclick="openSection('home')">กลับหน้าแรก</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="self-grid">
+        <aside class="card card-pad self-control-card">
+          <div class="page-title">
+            <h2 style="font-size:24px;">ค้นหารหัสสาขา</h2>
+            <p>พิมพ์รหัสสาขา ชื่อสาขา หรือจังหวัด แล้วเลือกรายการที่ตรงกับสาขาของคุณ</p>
+          </div>
+          <div class="grid" style="margin-top:16px;">
+            <div class="field">
+              <label>รหัสสาขา</label>
+              <div class="branch-search self-branch-search">
+                <input type="text" id="selfBranchCode" placeholder="พิมพ์รหัส / ชื่อสาขา / จังหวัด" autocomplete="off">
+                <div class="branch-suggestions" id="selfBranchSuggestions" role="listbox"></div>
+              </div>
+              <div class="helper" id="selfBranchHelper">เลือกสาขาจาก Master_Pun&GFA</div>
+            </div>
+            <div class="self-actions">
+              <button class="btn primary" onclick="runSelfCycleCheck()">ค้นหารอบสั่ง</button>
+            </div>
+          </div>
+        </aside>
+
+        <div class="self-main">
+          <article class="card card-pad self-panel active" id="selfCyclePanel">
+            <div class="self-result empty-state" id="selfCycleResult">
+              <div class="result-icon">✓</div>
+              <h3>ค้นหารหัสสาขาเพื่อดูรอบสั่ง</h3>
+              <p>ระบบจะแสดงวันรอบสั่งทั้งหมดของสาขาจาก Sheet Master_Pun&GFA</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="trackOrder" class="section">
+    <div class="page">
+      <header class="portal-header">
+        <div class="header-row">
+          <div class="header-left">
+            <button class="back-square" onclick="openSection('portal')">←</button>
+            <div class="owner-icon brand-logo-wrap" data-owner-icon><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div>
+            <div class="portal-title">
+              <h2>ตรวจสอบคำสั่งซื้อ</h2>
+              <p>ติดตามสถานะและประวัติการสั่งสินค้าของสาขา</p>
+            </div>
+          </div>
+          <div class="top-actions">
+            <button class="btn" onclick="openSection('portal')">กลับหน้าเมนู</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="self-grid">
+        <aside class="card card-pad self-control-card">
+          <div class="page-title">
+            <h2 style="font-size:24px;">ค้นหารหัสสาขา</h2>
+            <p>พิมพ์รหัสสาขา ชื่อสาขา หรือจังหวัด แล้วกดค้นหา</p>
+          </div>
+          <div class="grid" style="margin-top:16px;">
+            <div class="field">
+              <label>รหัสสาขา</label>
+              <div class="branch-search self-branch-search">
+                <input type="text" id="trackBranchCode" placeholder="พิมพ์รหัส / ชื่อสาขา / จังหวัด" autocomplete="off">
+                <div class="branch-suggestions" id="trackBranchSuggestions" role="listbox"></div>
+              </div>
+              <div class="helper" id="trackBranchHelper">เลือกสาขาจาก Master_Pun&GFA</div>
+            </div>
+            <div class="self-actions">
+              <button class="btn primary" onclick="loadMyOrders()">ตรวจสอบคำสั่งซื้อ</button>
+            </div>
+          </div>
+        </aside>
+
+        <div class="self-main">
+          <article class="card card-pad self-panel active" id="selfOrdersPanel">
+            <div class="topbar">
+              <div class="page-title">
+                <h2 style="font-size:24px;">ประวัติคำสั่งซื้อของสาขา</h2>
+                <p id="myOrdersHint">ค้นหารหัสสาขาเพื่อดูคำสั่งซื้อล่าสุด</p>
+              </div>
+              <button class="btn" onclick="loadMyOrders()">Refresh</button>
+            </div>
+            
+            <div class="item-sheet-summary">
+              <div class="summary-chip"><span>เอกสาร</span><b id="myOrderDocCount">0</b></div>
+              <div class="summary-chip"><span>รวมทุกรายการ</span><b id="myOrderRowCount">0</b></div>
+              <div class="summary-chip"><span>จำนวน (QTY)</span><b id="myOrderQty">0</b></div>
+            </div>
+            
+            <div class="table-wrap" style="margin-top:16px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:120px;">เวลาสั่ง</th>
+                    <th style="width:160px;">เลขเอกสาร</th>
+                    <th style="width:120px;">สถานะ</th>
+                    <th style="width:100px;">รอบสั่ง</th>
+                    <th style="width:80px;">รายการ</th>
+                    <th style="width:80px;">QTY</th>
+                    <th>รายการสินค้า (ย่อ)</th>
+                  </tr>
+                </thead>
+                <tbody id="myOrdersBody">
+                  <tr><td colspan="7"><div class="empty">กรุณากดค้นหาเพื่อดูประวัติการสั่งสินค้า</div></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="dashboard" class="section">
+    <div class="page">
+      <header class="portal-header"><div class="header-row"><div class="header-left"><button class="back-square" onclick="goBackPortal()">←</button><div class="owner-icon brand-logo-wrap" data-owner-icon><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div><div class="portal-title"><h2>Dashboard</h2><p>สรุปข้อมูลย้อนหลังจาก Sheet ตาม Owner</p></div></div><div class="top-actions"><select id="dashboardOwner" onchange="loadDashboard()"><option value="PUN">Punthai</option><option value="GFA">Coffee World</option></select><select id="dashboardDays" onchange="loadDashboard()"><option value="30">ย้อนหลัง 30 วัน</option><option value="90">ย้อนหลัง 90 วัน</option><option value="365">ย้อนหลัง 365 วัน</option></select><button class="btn" onclick="loadDashboard()">Refresh</button></div></div></header>
+      <div class="grid cols-4" id="dashboardStats"></div>
+      <div class="grid cols-2" style="margin-top:18px;"><div class="card card-pad"><h3 style="margin-top:0;">Top 10 Item ตามจำนวนสั่ง</h3><div id="topItemsChart" class="chart"></div></div><div class="card card-pad"><h3 style="margin-top:0;">รอบสั่ง</h3><div id="statusChart" class="chart"></div></div></div>
+    </div>
+  </section>
+
+  <section id="export" class="section">
+    <div class="page">
+      <header class="portal-header"><div class="header-row"><div class="header-left"><button class="back-square" onclick="goBackPortal()">←</button><div class="owner-icon brand-logo-wrap" data-owner-icon><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div><div class="portal-title"><h2>Export รอบสั่ง</h2><p>คัดข้อมูลตามวันที่รอบสั่ง พร้อม Cut-off อัตโนมัติ</p></div></div><div class="top-actions"><select id="exportOwner" onchange="loadCycleExport()"><option value="PUN">Punthai</option><option value="GFA">Coffee World</option></select><input type="date" id="exportCycleDate" onchange="loadCycleExport()"><button class="btn" onclick="loadCycleExport()">Preview</button><button class="btn primary" onclick="downloadCycleExportCsv()">Download CSV</button></div></div></header>
+      <div class="grid cols-4" id="exportStats"></div>
+      <div class="grid cols-2" style="margin-top:18px;">
+        <div class="card card-pad">
+          <div class="topbar"><div class="page-title"><h2 style="font-size:24px;">พร้อม Export</h2><p id="exportReadyHint">รายการที่ผ่านรอบสั่งและ Cut-off</p></div><button class="btn" onclick="downloadCycleExportCsv()">Download CSV</button></div>
+          <div class="table-wrap"><table><thead><tr><th>เลขที่เอกสาร</th><th>รหัสสาขา</th><th>ชื่อสาขา</th><th>รหัส Item</th><th>ชื่อ Item</th><th>QTY</th><th>ส่งข้อมูล</th></tr></thead><tbody id="exportReadyBody"></tbody></table></div>
+        </div>
+        <div class="card card-pad">
+          <div class="topbar"><div class="page-title"><h2 style="font-size:24px;">ต้องตรวจ</h2><p>รายการที่ยังไม่ควรนำเข้าโปรแกรมหลัก</p></div><button class="btn" onclick="downloadCycleIssueCsv()">Download Issues</button></div>
+          <div class="table-wrap"><table><thead><tr><th>ปัญหา</th><th>เลขที่เอกสาร</th><th>รหัสสาขา</th><th>รหัส Item</th><th>QTY</th><th>ส่งข้อมูล</th></tr></thead><tbody id="exportIssueBody"></tbody></table></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="history" class="section">
+    <div class="page">
+      <header class="portal-header"><div class="header-row"><div class="header-left"><button class="back-square" onclick="goBackPortal()">←</button><div class="owner-icon brand-logo-wrap" data-owner-icon><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div><div class="portal-title"><h2>ประวัติการสั่งสินค้า</h2><p>แสดงรายการล่าสุด เพื่อใช้ตรวจสอบเร็ว</p></div></div><div class="top-actions"><select id="historyOwner" onchange="loadHistory()"><option value="PUN">Punthai</option><option value="GFA">Coffee World</option></select><button class="btn" onclick="loadHistory()">Refresh</button></div></div></header>
+      <div class="card card-pad"><div class="table-wrap"><table><thead><tr><th>วันที่สั่ง</th><th>เลขที่เอกสาร</th><th>รหัสสาขา</th><th>ชื่อสาขา</th><th>จังหวัด</th><th>ITEM_NO</th><th>รหัส Item</th><th>ชื่อ Item</th><th>ขนาดรรจุสินค้า</th><th>UOM</th><th>จำนวน</th><th>หมายเหตุ</th><th>รอบสั่ง</th></tr></thead><tbody id="historyBody"></tbody></table></div></div>
+    </div>
+  </section>
+
+  <section id="master" class="section">
+    <div class="page">
+      <header class="portal-header"><div class="header-row"><div class="header-left"><button class="back-square" onclick="goBackPortal()">←</button><div class="owner-icon brand-logo-wrap" data-owner-icon><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div><div class="portal-title"><h2>Master Item</h2><p>ค้นหา เพิ่ม หรือแก้ไขชื่อ Item แบบง่าย</p></div></div><div class="top-actions"><select id="masterOwner" onchange="searchMasterItems()"><option value="PUN">Punthai</option><option value="GFA">Coffee World</option></select></div></div></header>
+      <div class="grid cols-2">
+        <div class="card card-pad"><h3 style="margin-top:0;">เพิ่ม/แก้ไข Master Item</h3><div class="grid"><div class="field"><label>รหัส Item</label><input type="text" id="masterItemCode" placeholder="ใส่รหัส Item"></div><div class="field"><label>ชื่อ Item</label><input type="text" id="masterItemName" placeholder="ใส่ชื่อ Item"></div><div class="field"><label>ขนาดรรจุสินค้า</label><input type="text" id="masterItemSize" placeholder="เช่น แพ็ค 100 ชิ้น"></div><div class="field"><label>UOM</label><input type="text" id="masterItemUom" placeholder="เช่น PAC / PC / EA"></div><button class="btn primary" onclick="upsertMasterItem()">บันทึก Master Item</button></div></div>
+        <div class="card card-pad"><h3 style="margin-top:0;">ค้นหา Master Item</h3><div class="field"><label>ค้นหา</label><input type="text" id="masterKeyword" oninput="debouncedSearchMasterItems()" placeholder="ค้นจากรหัสหรือชื่อ Item"></div><div class="table-wrap" style="margin-top:14px;"><table><thead><tr><th>รหัส Item</th><th>ชื่อ Item</th><th>ขนาดรรจุสินค้า</th><th>UOM</th></tr></thead><tbody id="masterBody"></tbody></table></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="logs" class="section">
+    <div class="page">
+      <header class="portal-header"><div class="header-row"><div class="header-left"><button class="back-square" onclick="goBackPortal()">←</button><div class="owner-icon brand-logo-wrap" data-owner-icon><img src="https://i.postimg.cc/fRKwcbHW/Punthai.png" alt="Punthai Logo" loading="eager"></div><div class="portal-title"><h2>Logs</h2><p>ประวัติการทำงานของระบบ</p></div></div><div class="top-actions"><button class="btn" onclick="loadLogs()">Refresh</button></div></div></header>
+      <div class="card card-pad"><div class="table-wrap"><table><thead><tr><th>เวลา</th><th>Action</th><th>Owner</th><th>เลขเอกสาร</th><th>รหัสสาขา</th><th>รายละเอียด</th><th>User</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>
+    </div>
+  </section>
+
+  <div class="loading" id="loading"><div class="loader-card"><div class="spinner"></div><span id="loadingText">กำลังประมวลผล...</span></div></div>
+  <div class="toast-stack" id="toastStack"></div>
+  <script src="script.js"></script>
+</body>
+</html>
