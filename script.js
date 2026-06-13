@@ -35,6 +35,7 @@ let CONFIG = {
 
 let OWNERS = CONFIG.owners;
 let ACCESS = { email: '', role: 'USER', isAdmin: false };
+let GOOGLE_CLIENT_ID = '';
 const ADMIN_TOKEN_STORAGE_KEY = 'warehouseOrderingAdminToken';
 const ADMIN_EMAIL_STORAGE_KEY = 'warehouseOrderingAdminEmail';
 const ADMIN_EXPIRES_STORAGE_KEY = 'warehouseOrderingAdminExpiresAt';
@@ -67,6 +68,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         CONFIG = res;
         OWNERS = res.owners || OWNERS;
         ACCESS = normalizeAccess(res.access);
+        GOOGLE_CLIENT_ID = String(res.auth?.googleClientId || '').trim();
+        initializeGoogleAdminSignIn();
         if (!ACCESS.isAdmin && getStoredAdminToken()) clearStoredAdminSession();
         if (orderDate) orderDate.value = res.today || todayIso();
         if (exportCycleDate) exportCycleDate.value = res.today || todayIso();
@@ -273,19 +276,16 @@ function armAdminLoginModal() {
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && modal.classList.contains('active')) closeAdminLogin();
   });
+  setTimeout(initializeGoogleAdminSignIn, 800);
 }
 
 function openAdminLogin() {
   const modal = document.getElementById('adminLoginModal');
-  const emailInput = document.getElementById('adminLoginEmail');
-  const codeInput = document.getElementById('adminLoginCode');
   if (!modal) return;
 
-  if (emailInput) emailInput.value = getStoredAdminEmail() || ACCESS.email || '';
-  if (codeInput) codeInput.value = '';
   modal.classList.add('active');
   modal.setAttribute('aria-hidden', 'false');
-  setTimeout(() => (emailInput && !emailInput.value ? emailInput : codeInput)?.focus(), 80);
+  initializeGoogleAdminSignIn();
 }
 
 function closeAdminLogin() {
@@ -295,24 +295,61 @@ function closeAdminLogin() {
   modal.setAttribute('aria-hidden', 'true');
 }
 
-async function submitAdminLogin(event) {
-  if (event) event.preventDefault();
-  const email = getValue('adminLoginEmail').trim().toLowerCase();
-  const code = getValue('adminLoginCode').trim();
-  if (!email || !code) return toast('กรุณากรอกอีเมลและรหัส Admin', 'warn');
+function initializeGoogleAdminSignIn() {
+  const buttonBox = document.getElementById('googleAdminButton');
+  const hint = document.getElementById('googleAdminSetupHint');
+  if (!buttonBox) return;
 
-  setLoading(true, 'กำลังตรวจสอบสิทธิ์ Admin...');
+  if (!GOOGLE_CLIENT_ID) {
+    buttonBox.innerHTML = '<button class="btn" type="button" disabled>รอการตั้งค่า Google Sign-In</button>';
+    if (hint) hint.textContent = 'ตั้ง Script Property ชื่อ WAREHOUSE_GOOGLE_CLIENT_ID ใน Apps Script แล้ว Deploy ใหม่';
+    return;
+  }
+
+  if (!window.google?.accounts?.id) {
+    if (hint) hint.textContent = 'กำลังโหลด Google Sign-In...';
+    setTimeout(initializeGoogleAdminSignIn, 600);
+    return;
+  }
+
+  if (buttonBox.dataset.ready === 'true' && buttonBox.dataset.clientId === GOOGLE_CLIENT_ID) return;
+
+  buttonBox.innerHTML = '';
+  buttonBox.dataset.ready = 'true';
+  buttonBox.dataset.clientId = GOOGLE_CLIENT_ID;
+  window.google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleGoogleAdminCredential,
+    ux_mode: 'popup'
+  });
+  window.google.accounts.id.renderButton(buttonBox, {
+    type: 'standard',
+    theme: 'outline',
+    size: 'large',
+    text: 'signin_with',
+    shape: 'rectangular',
+    logo_alignment: 'left',
+    width: Math.min(360, Math.max(260, buttonBox.clientWidth || 360))
+  });
+  if (hint) hint.textContent = 'เลือกบัญชี Google ที่เป็น Admin ระบบจะตรวจอีเมลให้อัตโนมัติ';
+}
+
+async function handleGoogleAdminCredential(response) {
+  const idToken = response && response.credential ? response.credential : '';
+  if (!idToken) return toast('ไม่พบข้อมูลยืนยันตัวตนจาก Google', 'warn');
+
+  setLoading(true, 'กำลังตรวจสอบบัญชี Google...');
   try {
-    const res = await apiRequest('adminLogin', { email, code });
+    const res = await apiRequest('googleAdminLogin', { idToken });
     setLoading(false);
-    if (!res.ok) return toast(res.message || 'เข้าสู่ระบบ Admin ไม่สำเร็จ', 'error');
+    if (!res.ok) return toast(res.message || 'เข้าสู่ระบบ Admin ด้วย Google ไม่สำเร็จ', 'error');
 
-    saveAdminSession(res.adminToken, res.access?.email || email, res.expiresAt || '');
+    saveAdminSession(res.adminToken, res.access?.email || '', res.expiresAt || '');
     ACCESS = normalizeAccess(res.access);
     syncAccessUI();
     setOwnerSelectors();
     closeAdminLogin();
-    toast(res.message || 'เข้าสู่ระบบ Admin สำเร็จ', 'success');
+    toast(res.message || 'เข้าสู่ระบบ Admin ด้วย Google สำเร็จ', 'success');
     selectOwner(currentOwnerKey || 'PUN');
   } catch (err) {
     setLoading(false);
@@ -394,7 +431,7 @@ function syncAccessUI() {
   if (status) {
     status.textContent = isAdmin()
       ? `Admin: ${ACCESS.email || getStoredAdminEmail() || 'เข้าสู่ระบบแล้ว'}`
-      : 'GitHub Pages ต้องเข้าสู่ระบบ Admin';
+      : 'Admin ใช้ Google Sign-In';
   }
   if (loginButton) loginButton.hidden = isAdmin();
   if (logoutButton) logoutButton.hidden = !isAdmin();

@@ -15,11 +15,11 @@ const APP_CONFIG = {
     'jirawan.ti@pt.co.th',
     'supaporn.ko@pt.co.th'
   ],
-  // GitHub Pages / static hosting cannot read the Google Chrome signed-in email.
-  // Set this Script Property in Apps Script: WAREHOUSE_ADMIN_LOGIN_CODE
-  // Admin login tokens are stored server-side in CacheService.
+  // GitHub Pages / static hosting cannot read the Google Chrome signed-in email directly.
+  // Set this Script Property in Apps Script: WAREHOUSE_GOOGLE_CLIENT_ID
+  // Admin Google login tokens are stored server-side in CacheService.
   adminLogin: {
-    codePropertyKey: 'WAREHOUSE_ADMIN_LOGIN_CODE',
+    googleClientIdPropertyKey: 'WAREHOUSE_GOOGLE_CLIENT_ID',
     tokenTtlSeconds: 21600
   },
   // n8n integration: ใส่ Production Webhook URL แล้วเปลี่ยน enabled เป็น true เมื่อพร้อมใช้งาน
@@ -149,7 +149,11 @@ function apiGetConfig(payload) {
     appName: 'Warehouse Ordering System',
     owners: APP_CONFIG.owners,
     today: Utilities.formatDate(new Date(), APP_CONFIG.timezone, 'yyyy-MM-dd'),
-    access: getCurrentUserAccess_(payload)
+    access: getCurrentUserAccess_(payload),
+    auth: {
+      googleClientId: getPrimaryGoogleClientId_(),
+      googleSignInEnabled: !!getPrimaryGoogleClientId_()
+    }
   };
 }
 
@@ -1807,50 +1811,47 @@ function buildN8nOrderPayload_(context) {
     items: items
   };
 }
-function apiAdminLogin(payload) {
-  const email = normalizeText_(payload && payload.email).toLowerCase();
-  const code = normalizeText_(payload && (payload.code || payload.pin || payload.password));
-
-  if (!email) {
-    return { ok: false, message: 'กรุณาระบุอีเมล Admin' };
-  }
-  if (!isAdminEmail_(email)) {
-    return { ok: false, message: 'อีเมลนี้ไม่ได้อยู่ในรายชื่อ Admin' };
-  }
-
-  const configuredCode = getAdminLoginCode_();
-  if (!configuredCode) {
-    return {
-      ok: false,
-      message: 'ยังไม่ได้ตั้งค่า WAREHOUSE_ADMIN_LOGIN_CODE ใน Apps Script Script Properties'
-    };
-  }
-  if (!code || code !== configuredCode) {
-    return { ok: false, message: 'รหัส Admin ไม่ถูกต้อง' };
-  }
-
-  const session = createAdminSession_(email);
-  appendLog_({
-    action: 'ADMIN_LOGIN',
-    owner: 'SYSTEM',
-    documentNo: 'ADMIN',
-    branchCode: 'SYSTEM',
-    details: 'เข้าสู่ระบบ Admin ผ่าน static UI',
-    email: email
-  });
-
-  return {
-    ok: true,
-    message: 'เข้าสู่ระบบ Admin สำเร็จ',
-    adminToken: session.token,
-    expiresAt: session.expiresAt,
-    access: {
-      email: email,
-      role: 'ADMIN',
-      isAdmin: true,
-      authMethod: 'adminToken'
+function apiGoogleAdminLogin(payload) {
+  try {
+    const idToken = normalizeText_(payload && (payload.idToken || payload.credential));
+    if (!idToken) {
+      return { ok: false, message: 'ไม่พบ Google ID token สำหรับตรวจสอบสิทธิ์' };
     }
-  };
+
+    const tokenInfo = verifyGoogleIdToken_(idToken);
+    const email = normalizeText_(tokenInfo.email).toLowerCase();
+    if (!email) {
+      return { ok: false, message: 'บัญชี Google นี้ไม่มีข้อมูลอีเมล' };
+    }
+    if (!isAdminEmail_(email)) {
+      return { ok: false, message: 'อีเมล ' + email + ' ไม่ได้อยู่ในรายชื่อ Admin' };
+    }
+
+    const session = createAdminSession_(email, 'googleIdentity');
+    appendLog_({
+      action: 'GOOGLE_ADMIN_LOGIN',
+      owner: 'SYSTEM',
+      documentNo: 'ADMIN',
+      branchCode: 'SYSTEM',
+      details: 'เข้าสู่ระบบ Admin ด้วย Google Identity Services',
+      email: email
+    });
+
+    return {
+      ok: true,
+      message: 'เข้าสู่ระบบ Admin ด้วย Google สำเร็จ',
+      adminToken: session.token,
+      expiresAt: session.expiresAt,
+      access: {
+        email: email,
+        role: 'ADMIN',
+        isAdmin: true,
+        authMethod: 'googleIdentity'
+      }
+    };
+  } catch (err) {
+    return { ok: false, message: err && err.message ? err.message : String(err) };
+  }
 }
 
 function apiAdminLogout(payload) {
@@ -1901,20 +1902,63 @@ function isAdminEmail_(email) {
     .indexOf(normalized) > -1;
 }
 
-function getAdminLoginCode_() {
-  const key = (APP_CONFIG.adminLogin && APP_CONFIG.adminLogin.codePropertyKey) || 'WAREHOUSE_ADMIN_LOGIN_CODE';
+function getGoogleClientIds_() {
+  const key = (APP_CONFIG.adminLogin && APP_CONFIG.adminLogin.googleClientIdPropertyKey) || 'WAREHOUSE_GOOGLE_CLIENT_ID';
   try {
-    return normalizeText_(PropertiesService.getScriptProperties().getProperty(key));
+    const value = normalizeText_(PropertiesService.getScriptProperties().getProperty(key));
+    return value
+      .split(',')
+      .map(function (item) { return normalizeText_(item); })
+      .filter(function (item) { return !!item; });
   } catch (err) {
-    return '';
+    return [];
   }
+}
+
+function getPrimaryGoogleClientId_() {
+  const ids = getGoogleClientIds_();
+  return ids.length ? ids[0] : '';
+}
+
+function verifyGoogleIdToken_(idToken) {
+  const clientIds = getGoogleClientIds_();
+  if (!clientIds.length) {
+    throw new Error('ยังไม่ได้ตั้งค่า WAREHOUSE_GOOGLE_CLIENT_ID ใน Apps Script Script Properties');
+  }
+
+  const response = UrlFetchApp.fetch(
+    'https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken),
+    { muteHttpExceptions: true }
+  );
+  const statusCode = response.getResponseCode();
+  let tokenInfo = {};
+  try {
+    tokenInfo = JSON.parse(response.getContentText() || '{}');
+  } catch (err) {
+    tokenInfo = {};
+  }
+
+  if (statusCode < 200 || statusCode >= 300) {
+    throw new Error(tokenInfo.error_description || tokenInfo.error || 'ตรวจสอบ Google ID token ไม่สำเร็จ');
+  }
+  if (clientIds.indexOf(normalizeText_(tokenInfo.aud)) === -1) {
+    throw new Error('Google Client ID ไม่ตรงกับระบบนี้');
+  }
+  if (!(tokenInfo.email_verified === true || tokenInfo.email_verified === 'true')) {
+    throw new Error('Google ยังไม่ได้ยืนยันอีเมลของบัญชีนี้');
+  }
+  if (Number(tokenInfo.exp || 0) * 1000 < Date.now()) {
+    throw new Error('Google ID token หมดอายุแล้ว กรุณาเข้าสู่ระบบใหม่');
+  }
+
+  return tokenInfo;
 }
 
 function getAdminTokenFromPayload_(payload) {
   return normalizeText_(payload && (payload.adminToken || payload.token || payload.sessionToken));
 }
 
-function createAdminSession_(email) {
+function createAdminSession_(email, authMethod) {
   const token = Utilities.getUuid() + '-' + Utilities.getUuid();
   const maxTtl = 21600;
   const requestedTtl = Number(APP_CONFIG.adminLogin && APP_CONFIG.adminLogin.tokenTtlSeconds) || maxTtl;
@@ -1924,7 +1968,7 @@ function createAdminSession_(email) {
     email: email,
     role: 'ADMIN',
     isAdmin: true,
-    authMethod: 'adminToken',
+    authMethod: authMethod || 'adminToken',
     expiresAt: expiresAt.toISOString()
   };
 
@@ -2173,9 +2217,9 @@ function handlePublicApi_(action, payload) {
         result = apiGetConfig(payload);
         break;
 
-      case 'adminLogin':
-      case 'loginAdmin':
-        result = apiAdminLogin(payload);
+      case 'googleAdminLogin':
+      case 'adminGoogleLogin':
+        result = apiGoogleAdminLogin(payload);
         break;
 
       case 'adminLogout':
@@ -2251,7 +2295,7 @@ function handlePublicApi_(action, payload) {
           availableActions: [
             'ping',
             'getConfig',
-            'adminLogin',
+            'googleAdminLogin',
             'adminLogout',
             'lookupBranch',
             'lookupItem',

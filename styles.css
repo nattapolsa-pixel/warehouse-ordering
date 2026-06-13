@@ -2432,6 +2432,36 @@ body.admin-mode .admin-status-pill {
   min-height: 52px;
 }
 
+.google-admin-panel {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #dce6ef;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.78);
+}
+
+.google-admin-button {
+  min-height: 44px;
+  display: grid;
+  align-items: center;
+}
+
+.google-admin-button > div {
+  width: 100% !important;
+}
+
+.admin-login-note {
+  padding: 12px 14px;
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: 8px;
+  background: #f0fdf6;
+  color: #0d7c45;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -3730,4 +3760,3 @@ div.empty {
   filter: invert(0.9) sepia(1) saturate(0) hue-rotate(0deg) !important;
   cursor: pointer !important;
 }
-
