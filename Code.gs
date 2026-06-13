@@ -15,6 +15,13 @@ const APP_CONFIG = {
     'jirawan.ti@pt.co.th',
     'supaporn.ko@pt.co.th'
   ],
+  // GitHub Pages / static hosting cannot read the Google Chrome signed-in email.
+  // Set this Script Property in Apps Script: WAREHOUSE_ADMIN_LOGIN_CODE
+  // Admin login tokens are stored server-side in CacheService.
+  adminLogin: {
+    codePropertyKey: 'WAREHOUSE_ADMIN_LOGIN_CODE',
+    tokenTtlSeconds: 21600
+  },
   // n8n integration: ใส่ Production Webhook URL แล้วเปลี่ยน enabled เป็น true เมื่อพร้อมใช้งาน
   n8n: {
     enabled: true,
@@ -135,14 +142,14 @@ function onOpen() {
 /**
  * API: โหลด config หลัก
  */
-function apiGetConfig() {
+function apiGetConfig(payload) {
   ensureSystemSheets_();
   return {
     ok: true,
     appName: 'Warehouse Ordering System',
     owners: APP_CONFIG.owners,
     today: Utilities.formatDate(new Date(), APP_CONFIG.timezone, 'yyyy-MM-dd'),
-    access: getCurrentUserAccess_()
+    access: getCurrentUserAccess_(payload)
   };
 }
 
@@ -398,10 +405,10 @@ function apiSubmitOrder(payload) {
 /**
  * API: ดูประวัติคำสั่งสินค้าล่าสุด
  */
-function apiGetRecentOrders(ownerKey, limit, branchCode) {
+function apiGetRecentOrders(ownerKey, limit, branchCode, payload) {
   try {
     const owner = getOwner_(ownerKey);
-    const access = getCurrentUserAccess_();
+    const access = getCurrentUserAccess_(payload);
     const requestedBranchCode = normalizeText_(branchCode);
     if (!access.isAdmin && !requestedBranchCode) {
       throw new Error('ผู้ใช้งานทั่วไปต้องระบุรหัสสาขาเพื่อดูประวัติ');
@@ -561,9 +568,9 @@ function apiGetMyOrders(ownerKey, branchCode, limit) {
 /**
  * API: Dashboard สรุปตาม Owner
  */
-function apiGetDashboard(ownerKey, daysBack, targetDate) {
+function apiGetDashboard(ownerKey, daysBack, targetDate, payload) {
   try {
-    requireAdmin_();
+    requireAdmin_(payload);
     const owner = getOwner_(ownerKey);
     const days = Math.min(Math.max(Number(daysBack || 30), 1), 365);
     const cacheKey = 'dashboard_' + owner.key + '_' + days + '_' + (targetDate || '');
@@ -689,9 +696,9 @@ function apiGetDashboard(ownerKey, daysBack, targetDate) {
  * API: Export รายการตามวันที่รอบสั่ง
  * เลือก Owner + วันที่รอบสั่ง แล้วระบบแยกแถวพร้อม Export ออกจากแถวที่ต้องตรวจ
  */
-function apiGetCycleExport(ownerKey, cycleDate) {
+function apiGetCycleExport(ownerKey, cycleDate, payload) {
   try {
-    requireAdmin_();
+    requireAdmin_(payload);
     const owner = getOwner_(ownerKey);
     const selectedDate = parseIsoDate_(cycleDate);
     const selectedDateKey = getDateKey_(selectedDate);
@@ -843,9 +850,9 @@ function apiGetCycleExport(ownerKey, cycleDate) {
 /**
  * API: ค้นหา Master Item
  */
-function apiSearchMasterItems(ownerKey, keyword, limit) {
+function apiSearchMasterItems(ownerKey, keyword, limit, payload) {
   try {
-    requireAdmin_();
+    requireAdmin_(payload);
     const owner = getOwner_(ownerKey);
     const max = Math.min(Number(limit || 30), 100);
     const q = normalizeText_(keyword).toLowerCase();
@@ -873,8 +880,8 @@ function apiSearchMasterItems(ownerKey, keyword, limit) {
  * API: เพิ่ม/แก้ไข Master Item แบบง่าย
  * หมายเหตุ: ใช้รหัส Item เป็น Key, ชื่อ Item จะอยู่ Column C ตาม requirement
  */
-function apiUpsertMasterItem(ownerKey, item) {
-  requireAdmin_();
+function apiUpsertMasterItem(ownerKey, item, payload) {
+  requireAdmin_(payload);
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
 
@@ -951,9 +958,9 @@ function apiUpsertMasterItem(ownerKey, item) {
 /**
  * API: อ่าน Logs ล่าสุด
  */
-function apiGetLogs(limit) {
+function apiGetLogs(limit, payload) {
   try {
-    requireAdmin_();
+    requireAdmin_(payload);
     const max = Math.min(Number(limit || 50), 200);
     const ss = getSs_();
     const sh = ss.getSheetByName(APP_CONFIG.sheets.logs);
@@ -1800,26 +1807,162 @@ function buildN8nOrderPayload_(context) {
     items: items
   };
 }
-function getCurrentUserAccess_() {
-  const email = normalizeText_(getUserEmail_()).toLowerCase();
-  const isAdmin = APP_CONFIG.adminEmails
-    .map(function (item) { return normalizeText_(item).toLowerCase(); })
-    .indexOf(email) > -1;
+function apiAdminLogin(payload) {
+  const email = normalizeText_(payload && payload.email).toLowerCase();
+  const code = normalizeText_(payload && (payload.code || payload.pin || payload.password));
+
+  if (!email) {
+    return { ok: false, message: 'กรุณาระบุอีเมล Admin' };
+  }
+  if (!isAdminEmail_(email)) {
+    return { ok: false, message: 'อีเมลนี้ไม่ได้อยู่ในรายชื่อ Admin' };
+  }
+
+  const configuredCode = getAdminLoginCode_();
+  if (!configuredCode) {
+    return {
+      ok: false,
+      message: 'ยังไม่ได้ตั้งค่า WAREHOUSE_ADMIN_LOGIN_CODE ใน Apps Script Script Properties'
+    };
+  }
+  if (!code || code !== configuredCode) {
+    return { ok: false, message: 'รหัส Admin ไม่ถูกต้อง' };
+  }
+
+  const session = createAdminSession_(email);
+  appendLog_({
+    action: 'ADMIN_LOGIN',
+    owner: 'SYSTEM',
+    documentNo: 'ADMIN',
+    branchCode: 'SYSTEM',
+    details: 'เข้าสู่ระบบ Admin ผ่าน static UI',
+    email: email
+  });
 
   return {
-    email: email,
-    role: isAdmin ? 'ADMIN' : 'USER',
-    isAdmin: isAdmin
+    ok: true,
+    message: 'เข้าสู่ระบบ Admin สำเร็จ',
+    adminToken: session.token,
+    expiresAt: session.expiresAt,
+    access: {
+      email: email,
+      role: 'ADMIN',
+      isAdmin: true,
+      authMethod: 'adminToken'
+    }
   };
 }
 
-function requireAdmin_() {
-  const access = getCurrentUserAccess_();
+function apiAdminLogout(payload) {
+  const token = getAdminTokenFromPayload_(payload);
+  if (token) {
+    CacheService.getScriptCache().remove(buildAdminSessionCacheKey_(token));
+  }
+  return { ok: true, message: 'ออกจากระบบ Admin แล้ว' };
+}
+
+function getCurrentUserAccess_(payload) {
+  const email = normalizeText_(getUserEmail_()).toLowerCase();
+  const isAdmin = isAdminEmail_(email);
+
+  if (isAdmin) {
+    return {
+      email: email,
+      role: 'ADMIN',
+      isAdmin: true,
+      authMethod: 'google'
+    };
+  }
+
+  const tokenAccess = getAccessFromAdminToken_(getAdminTokenFromPayload_(payload));
+  if (tokenAccess && tokenAccess.isAdmin) return tokenAccess;
+
+  return {
+    email: email,
+    role: 'USER',
+    isAdmin: false,
+    authMethod: email ? 'google' : 'anonymous'
+  };
+}
+
+function requireAdmin_(payload) {
+  const access = getCurrentUserAccess_(payload);
   if (!access.isAdmin) {
     throw new Error('หน้านี้สำหรับ Admin เท่านั้น');
   }
   return access;
 }
+
+function isAdminEmail_(email) {
+  const normalized = normalizeText_(email).toLowerCase();
+  if (!normalized) return false;
+  return APP_CONFIG.adminEmails
+    .map(function (item) { return normalizeText_(item).toLowerCase(); })
+    .indexOf(normalized) > -1;
+}
+
+function getAdminLoginCode_() {
+  const key = (APP_CONFIG.adminLogin && APP_CONFIG.adminLogin.codePropertyKey) || 'WAREHOUSE_ADMIN_LOGIN_CODE';
+  try {
+    return normalizeText_(PropertiesService.getScriptProperties().getProperty(key));
+  } catch (err) {
+    return '';
+  }
+}
+
+function getAdminTokenFromPayload_(payload) {
+  return normalizeText_(payload && (payload.adminToken || payload.token || payload.sessionToken));
+}
+
+function createAdminSession_(email) {
+  const token = Utilities.getUuid() + '-' + Utilities.getUuid();
+  const maxTtl = 21600;
+  const requestedTtl = Number(APP_CONFIG.adminLogin && APP_CONFIG.adminLogin.tokenTtlSeconds) || maxTtl;
+  const ttlSeconds = Math.min(Math.max(requestedTtl, 60), maxTtl);
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+  const session = {
+    email: email,
+    role: 'ADMIN',
+    isAdmin: true,
+    authMethod: 'adminToken',
+    expiresAt: expiresAt.toISOString()
+  };
+
+  CacheService.getScriptCache().put(
+    buildAdminSessionCacheKey_(token),
+    JSON.stringify(session),
+    ttlSeconds
+  );
+
+  return {
+    token: token,
+    expiresAt: Utilities.formatDate(expiresAt, APP_CONFIG.timezone, 'yyyy-MM-dd HH:mm:ss')
+  };
+}
+
+function getAccessFromAdminToken_(token) {
+  if (!token) return null;
+  try {
+    const raw = CacheService.getScriptCache().get(buildAdminSessionCacheKey_(token));
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    const email = normalizeText_(session.email).toLowerCase();
+    if (!isAdminEmail_(email)) return null;
+    return {
+      email: email,
+      role: 'ADMIN',
+      isAdmin: true,
+      authMethod: 'adminToken'
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+function buildAdminSessionCacheKey_(token) {
+  return 'admin_session_' + token;
+}
+
 function getUserEmail_() {
   try {
     return Session.getActiveUser().getEmail() || '';
@@ -2027,7 +2170,17 @@ function handlePublicApi_(action, payload) {
 
       case 'getConfig':
       case 'config':
-        result = apiGetConfig();
+        result = apiGetConfig(payload);
+        break;
+
+      case 'adminLogin':
+      case 'loginAdmin':
+        result = apiAdminLogin(payload);
+        break;
+
+      case 'adminLogout':
+      case 'logoutAdmin':
+        result = apiAdminLogout(payload);
         break;
 
       case 'lookupBranch':
@@ -2054,7 +2207,7 @@ function handlePublicApi_(action, payload) {
 
       case 'history':
       case 'recentOrders':
-        result = apiGetRecentOrders(payload.ownerKey || payload.owner || 'PUN', payload.limit || 80, payload.branchCode || payload.branch || '');
+        result = apiGetRecentOrders(payload.ownerKey || payload.owner || 'PUN', payload.limit || 80, payload.branchCode || payload.branch || '', payload);
         break;
 
       case 'myOrders':
@@ -2066,28 +2219,29 @@ function handlePublicApi_(action, payload) {
         result = apiGetDashboard(
           payload.ownerKey || payload.owner || 'PUN',
           payload.daysBack || payload.days || 30,
-          payload.targetDate || payload.date || ''
+          payload.targetDate || payload.date || '',
+          payload
         );
         break;
 
       case 'cycleExport':
       case 'exportCycle':
-        result = apiGetCycleExport(payload.ownerKey || payload.owner || 'PUN', payload.cycleDate || payload.orderDate || payload.date || '');
+        result = apiGetCycleExport(payload.ownerKey || payload.owner || 'PUN', payload.cycleDate || payload.orderDate || payload.date || '', payload);
         break;
 
       case 'searchMasterItems':
       case 'masterSearch':
-        result = apiSearchMasterItems(payload.ownerKey || payload.owner || 'PUN', payload.keyword || payload.q || '', payload.limit || 30);
+        result = apiSearchMasterItems(payload.ownerKey || payload.owner || 'PUN', payload.keyword || payload.q || '', payload.limit || 30, payload);
         break;
 
       case 'upsertMasterItem':
       case 'masterUpsert':
-        result = apiUpsertMasterItem(payload.ownerKey || payload.owner || 'PUN', normalizeMasterItemPayloadForApi_(payload));
+        result = apiUpsertMasterItem(payload.ownerKey || payload.owner || 'PUN', normalizeMasterItemPayloadForApi_(payload), payload);
         break;
 
       case 'logs':
       case 'getLogs':
-        result = apiGetLogs(payload.limit || 50);
+        result = apiGetLogs(payload.limit || 50, payload);
         break;
 
       default:
@@ -2097,6 +2251,8 @@ function handlePublicApi_(action, payload) {
           availableActions: [
             'ping',
             'getConfig',
+            'adminLogin',
+            'adminLogout',
             'lookupBranch',
             'lookupItem',
             'fastLookup',

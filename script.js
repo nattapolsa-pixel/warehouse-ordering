@@ -35,6 +35,9 @@ let CONFIG = {
 
 let OWNERS = CONFIG.owners;
 let ACCESS = { email: '', role: 'USER', isAdmin: false };
+const ADMIN_TOKEN_STORAGE_KEY = 'warehouseOrderingAdminToken';
+const ADMIN_EMAIL_STORAGE_KEY = 'warehouseOrderingAdminEmail';
+const ADMIN_EXPIRES_STORAGE_KEY = 'warehouseOrderingAdminExpiresAt';
 let currentOwnerKey = 'PUN';
 let contextTimer = null;
 let masterTimer = null;
@@ -49,6 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   armBranchSearch();
   armSelfServiceSearch();
   armTrackOrderSearch();
+  armAdminLoginModal();
   startRealtimeClock();
   const orderDate = document.getElementById('orderDate');
   if (orderDate) orderDate.value = todayIso();
@@ -63,6 +67,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         CONFIG = res;
         OWNERS = res.owners || OWNERS;
         ACCESS = normalizeAccess(res.access);
+        if (!ACCESS.isAdmin && getStoredAdminToken()) clearStoredAdminSession();
         if (orderDate) orderDate.value = res.today || todayIso();
         if (exportCycleDate) exportCycleDate.value = res.today || todayIso();
       }
@@ -121,6 +126,11 @@ function apiRequest(action, params = {}) {
   const url = new URL(API_URL);
   url.searchParams.set('action', action);
   url.searchParams.set('callback', callbackName);
+
+  const storedAdminToken = getStoredAdminToken();
+  if (storedAdminToken && !Object.prototype.hasOwnProperty.call(params || {}, 'adminToken')) {
+    url.searchParams.set('adminToken', storedAdminToken);
+  }
 
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value === undefined || value === null) return;
@@ -254,11 +264,117 @@ function openOwnerSection(id) {
   openSection(id);
 }
 
+function armAdminLoginModal() {
+  const modal = document.getElementById('adminLoginModal');
+  if (!modal) return;
+  modal.addEventListener('click', event => {
+    if (event.target === modal) closeAdminLogin();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && modal.classList.contains('active')) closeAdminLogin();
+  });
+}
+
+function openAdminLogin() {
+  const modal = document.getElementById('adminLoginModal');
+  const emailInput = document.getElementById('adminLoginEmail');
+  const codeInput = document.getElementById('adminLoginCode');
+  if (!modal) return;
+
+  if (emailInput) emailInput.value = getStoredAdminEmail() || ACCESS.email || '';
+  if (codeInput) codeInput.value = '';
+  modal.classList.add('active');
+  modal.setAttribute('aria-hidden', 'false');
+  setTimeout(() => (emailInput && !emailInput.value ? emailInput : codeInput)?.focus(), 80);
+}
+
+function closeAdminLogin() {
+  const modal = document.getElementById('adminLoginModal');
+  if (!modal) return;
+  modal.classList.remove('active');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+async function submitAdminLogin(event) {
+  if (event) event.preventDefault();
+  const email = getValue('adminLoginEmail').trim().toLowerCase();
+  const code = getValue('adminLoginCode').trim();
+  if (!email || !code) return toast('กรุณากรอกอีเมลและรหัส Admin', 'warn');
+
+  setLoading(true, 'กำลังตรวจสอบสิทธิ์ Admin...');
+  try {
+    const res = await apiRequest('adminLogin', { email, code });
+    setLoading(false);
+    if (!res.ok) return toast(res.message || 'เข้าสู่ระบบ Admin ไม่สำเร็จ', 'error');
+
+    saveAdminSession(res.adminToken, res.access?.email || email, res.expiresAt || '');
+    ACCESS = normalizeAccess(res.access);
+    syncAccessUI();
+    setOwnerSelectors();
+    closeAdminLogin();
+    toast(res.message || 'เข้าสู่ระบบ Admin สำเร็จ', 'success');
+    selectOwner(currentOwnerKey || 'PUN');
+  } catch (err) {
+    setLoading(false);
+    toast(err.message || err, 'error');
+  }
+}
+
+async function logoutAdmin() {
+  const token = getStoredAdminToken();
+  clearStoredAdminSession();
+  ACCESS = { email: '', role: 'USER', isAdmin: false };
+  syncAccessUI();
+  openSection('home');
+  toast('ออกจากระบบ Admin แล้ว', 'success');
+  if (token) {
+    try {
+      await apiRequest('adminLogout', { adminToken: token });
+    } catch (err) {
+      // Local logout already completed.
+    }
+  }
+}
+
+function saveAdminSession(token, email, expiresAt) {
+  if (!token) return;
+  try {
+    localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
+    localStorage.setItem(ADMIN_EMAIL_STORAGE_KEY, email || '');
+    localStorage.setItem(ADMIN_EXPIRES_STORAGE_KEY, expiresAt || '');
+  } catch (err) {}
+}
+
+function clearStoredAdminSession() {
+  try {
+    localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+    localStorage.removeItem(ADMIN_EMAIL_STORAGE_KEY);
+    localStorage.removeItem(ADMIN_EXPIRES_STORAGE_KEY);
+  } catch (err) {}
+}
+
+function getStoredAdminToken() {
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || '';
+  } catch (err) {
+    return '';
+  }
+}
+
+function getStoredAdminEmail() {
+  try {
+    return localStorage.getItem(ADMIN_EMAIL_STORAGE_KEY) || '';
+  } catch (err) {
+    return '';
+  }
+}
+
 function normalizeAccess(access) {
   return {
     email: String(access?.email || '').trim(),
     role: String(access?.role || 'USER').trim().toUpperCase(),
-    isAdmin: !!access?.isAdmin
+    isAdmin: !!access?.isAdmin,
+    authMethod: String(access?.authMethod || '').trim()
   };
 }
 
@@ -272,6 +388,16 @@ function isAdminSection(id) {
 
 function syncAccessUI() {
   document.body.classList.toggle('admin-mode', isAdmin());
+  const status = document.getElementById('adminAccessStatus');
+  const loginButton = document.getElementById('adminLoginButton');
+  const logoutButton = document.getElementById('adminLogoutButton');
+  if (status) {
+    status.textContent = isAdmin()
+      ? `Admin: ${ACCESS.email || getStoredAdminEmail() || 'เข้าสู่ระบบแล้ว'}`
+      : 'GitHub Pages ต้องเข้าสู่ระบบ Admin';
+  }
+  if (loginButton) loginButton.hidden = isAdmin();
+  if (logoutButton) logoutButton.hidden = !isAdmin();
 }
 
 function setOwnerSelectors() {
