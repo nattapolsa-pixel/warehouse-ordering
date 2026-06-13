@@ -35,6 +35,7 @@ let CONFIG = {
 
 let OWNERS = CONFIG.owners;
 let ACCESS = { email: '', role: 'USER', isAdmin: false };
+let loadedMyOrders = [];
 let GOOGLE_CLIENT_ID = '';
 const ADMIN_TOKEN_STORAGE_KEY = 'warehouseOrderingAdminToken';
 const ADMIN_EMAIL_STORAGE_KEY = 'warehouseOrderingAdminEmail';
@@ -54,6 +55,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   armSelfServiceSearch();
   armTrackOrderSearch();
   armAdminLoginModal();
+  armConfirmModal();
   startRealtimeClock();
   const orderDate = document.getElementById('orderDate');
   if (orderDate) orderDate.value = todayIso();
@@ -252,10 +254,8 @@ function startOrder(ownerKey) {
   syncSelfServiceOwner();
 
   clearOrderContext();
-  preloadFastLookupData(ownerKey, true);
   openSection('order');
-
-  if (!document.getElementById('itemBody').children.length) ensureItemRows();
+  loadMasterItemsIntoTable(ownerKey);
 }
 
 function openOwnerSection(id) {
@@ -293,6 +293,54 @@ function closeAdminLogin() {
   if (!modal) return;
   modal.classList.remove('active');
   modal.setAttribute('aria-hidden', 'true');
+}
+
+let confirmModalResolver = null;
+
+function armConfirmModal() {
+  const modal = document.getElementById('confirmModal');
+  if (!modal) return;
+  modal.addEventListener('click', event => {
+    if (event.target === modal) closeConfirmModal(false);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && modal.classList.contains('active')) {
+      closeConfirmModal(false);
+    }
+  });
+}
+
+function showConfirmModal({ title, htmlMessage }) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirmModal');
+    const titleEl = document.getElementById('confirmModalTitle');
+    const msgEl = document.getElementById('confirmModalMessage');
+    
+    if (!modal || !titleEl || !msgEl) {
+      resolve(confirm(htmlMessage.replace(/<[^>]*>/g, '')));
+      return;
+    }
+    
+    titleEl.textContent = title || 'ยืนยันการดำเนินการ';
+    msgEl.innerHTML = htmlMessage;
+    
+    confirmModalResolver = resolve;
+    
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+  });
+}
+
+function closeConfirmModal(result) {
+  const modal = document.getElementById('confirmModal');
+  if (modal) {
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+  if (confirmModalResolver) {
+    confirmModalResolver(result);
+    confirmModalResolver = null;
+  }
 }
 
 function initializeGoogleAdminSignIn() {
@@ -856,6 +904,8 @@ function renderMyOrders(orders, summary, branchCode) {
   const body = document.getElementById('myOrdersBody');
   if (!body) return;
 
+  loadedMyOrders = orders;
+
   const totalDocs = summary?.totalDocuments ?? orders.length;
   const totalRows = summary?.totalRows ?? orders.reduce((sum, doc) => sum + Number(doc.totalRows || doc.items?.length || 0), 0);
   const totalQty = summary?.totalQty ?? orders.reduce((sum, doc) => sum + Number(doc.totalQty || 0), 0);
@@ -866,21 +916,30 @@ function renderMyOrders(orders, summary, branchCode) {
   setText('myOrdersHint', `รหัสสาขา ${branchCode} · แสดงคำสั่งซื้อล่าสุดของ Owner ${currentOwnerKey}`);
 
   if (!orders.length) {
-    body.innerHTML = '<tr><td colspan="7"><div class="empty">ยังไม่พบคำสั่งซื้อของสาขานี้</div></td></tr>';
+    body.innerHTML = '<tr><td colspan="8"><div class="empty">ยังไม่พบคำสั่งซื้อของสาขานี้</div></td></tr>';
     return;
   }
 
-  body.innerHTML = orders.map(order => `
-    <tr>
-      <td>${escapeHtml(order.orderDate || order.timestamp || '')}</td>
-      <td><b>${escapeHtml(order.documentNo || '-')}</b></td>
-      <td>${statusBadge(order.status || 'รอดำเนินการ')}</td>
-      <td>${cycleBadge(order.cycleStatus || '')}</td>
-      <td>${escapeHtml(numberFmt(order.totalRows || order.items?.length || 0))}</td>
-      <td>${escapeHtml(numberFmt(order.totalQty || 0))}</td>
-      <td>${escapeHtml(formatOrderItems(order.items || []))}</td>
-    </tr>
-  `).join('');
+  body.innerHTML = orders.map(order => {
+    const statusText = String(order.status || '').trim();
+    const canEdit = statusText === 'รอดำเนินการ';
+    const editBtn = canEdit 
+      ? `<button class="btn primary btn-xs edit-order-btn" style="padding: 4px 8px; font-size: 12px;" onclick="editOrder('${escapeAttr(order.documentNo)}')">แก้ไข</button>`
+      : `<button class="btn btn-xs" style="padding: 4px 8px; font-size: 12px;" disabled title="ไม่สามารถแก้ไขได้ เนื่องจากออร์เดอร์ได้รับการดำเนินการแล้ว">แก้ไข</button>`;
+
+    return `
+      <tr>
+        <td>${escapeHtml(order.orderDate || order.timestamp || '')}</td>
+        <td><b>${escapeHtml(order.documentNo || '-')}</b></td>
+        <td>${statusBadge(order.status || 'รอดำเนินการ')}</td>
+        <td>${cycleBadge(order.cycleStatus || '')}</td>
+        <td>${escapeHtml(numberFmt(order.totalRows || order.items?.length || 0))}</td>
+        <td>${escapeHtml(numberFmt(order.totalQty || 0))}</td>
+        <td>${escapeHtml(formatOrderItems(order.items || []))}</td>
+        <td style="text-align: center;">${editBtn}</td>
+      </tr>
+    `;
+  }).join('');
 }
 
 function groupHistoryRowsToOrders(rows) {
@@ -893,6 +952,11 @@ function groupHistoryRowsToOrders(rows) {
         orderDate: row.orderDate || row.timestamp || '',
         status: row.status || '',
         cycleStatus: row.cycleStatus || '',
+        owner: row.owner || '',
+        branchCode: row.branchCode || '',
+        branchName: row.branchName || '',
+        branchEmail: row.branchEmail || '',
+        branchZone: row.branchZone || '',
         totalRows: 0,
         totalQty: 0,
         items: []
@@ -901,9 +965,13 @@ function groupHistoryRowsToOrders(rows) {
     map[doc].totalRows += 1;
     map[doc].totalQty += Number(row.qty || 0);
     map[doc].items.push({
+      itemNo: row.itemNo || '',
       itemCode: row.itemCode || '',
       itemName: row.itemName || '',
-      qty: row.qty || ''
+      itemSize: row.itemSize || '',
+      uom: row.uom || '',
+      qty: row.qty || '',
+      note: row.note || ''
     });
   });
   return Object.values(map);
@@ -1331,6 +1399,7 @@ function setCycleStatus(statusText) {
 
 const ITEM_SUGGEST_LIMIT = 8;
 const DEFAULT_ITEM_ROWS = 14;
+const QTY_OVER_THRESHOLD = 100;
 let itemTableArmed = false;
 
 function ensureItemRows(minRows = DEFAULT_ITEM_ROWS) {
@@ -1341,23 +1410,61 @@ function ensureItemRows(minRows = DEFAULT_ITEM_ROWS) {
   updateItemSummary();
 }
 
+async function loadMasterItemsIntoTable(ownerKey) {
+  const body = document.getElementById('itemBody');
+  if (!body) return;
+
+  body.innerHTML = '<tr><td colspan="8"><div class="empty">กำลังโหลดรายการสินค้าจาก Master...</div></td></tr>';
+  updateItemSummary();
+
+  try {
+    const res = await preloadFastLookupData(ownerKey, true);
+    body.innerHTML = '';
+
+    const items = res.itemRows || [];
+    if (items.length === 0) {
+      ensureItemRows();
+      return;
+    }
+
+    items.forEach(item => {
+      addItemRow({
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        itemSize: item.itemSize,
+        uom: item.uom,
+        qty: '',
+        note: '',
+        isPreloaded: true
+      });
+    });
+
+    refreshItemNo();
+    updateItemSummary();
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="8"><div class="empty danger">โหลดรายการสินค้าไม่สำเร็จ: ${err.message || err}</div></td></tr>`;
+    toast(`โหลด Master Item ไม่สำเร็จ: ${err.message || err}`, 'error');
+  }
+}
+
 function addItemRow(item = {}) {
   armItemTableShortcuts();
   const body = document.getElementById('itemBody');
   const tr = document.createElement('tr');
+  const isPreloaded = !!item.isPreloaded;
 
   tr.innerHTML = `
     <td class="item-no"></td>
     <td class="item-lookup-cell">
       <div class="item-search">
-        <input type="text" class="item-code grid-input" data-col="code" autocomplete="off" placeholder="รหัส / ชื่อสินค้า" value="${escapeAttr(item.itemCode || '')}">
-        <div class="item-suggestions" role="listbox"></div>
+        <input type="text" class="item-code ${isPreloaded ? '' : 'grid-input'}" data-col="code" autocomplete="off" placeholder="รหัส / ชื่อสินค้า" value="${escapeAttr(item.itemCode || '')}" ${isPreloaded ? 'readonly' : ''}>
+        ${isPreloaded ? '' : '<div class="item-suggestions" role="listbox"></div>'}
       </div>
       <div class="mini item-message"></div>
     </td>
-    <td><input type="text" class="item-name" readonly placeholder="ระบบจะดึงชื่อ Item"></td>
-    <td><input type="text" class="item-size" readonly placeholder="ขนาดรรจุ"></td>
-    <td><input type="text" class="item-uom" readonly placeholder="UOM"></td>
+    <td><input type="text" class="item-name" readonly placeholder="${isPreloaded ? '' : 'ระบบจะดึงชื่อ Item'}" value="${escapeAttr(item.itemName || '')}"></td>
+    <td><input type="text" class="item-size" readonly placeholder="${isPreloaded ? '' : 'ขนาดบรรจุ'}" value="${escapeAttr(item.itemSize || '')}"></td>
+    <td><input type="text" class="item-uom" readonly placeholder="${isPreloaded ? '' : 'UOM'}" value="${escapeAttr(item.uom || '')}"></td>
     <td><input type="number" class="item-qty grid-input" data-col="qty" min="1" step="1" placeholder="จำนวน" value="${escapeAttr(item.qty || '')}"></td>
     <td><textarea class="item-note grid-input" data-col="note" placeholder="หมายเหตุ">${escapeHtml(item.note || '')}</textarea></td>
     <td class="row-action-cell"><button class="row-delete" type="button" aria-label="ลบรายการ" title="ลบรายการ">×</button></td>
@@ -1371,28 +1478,30 @@ function addItemRow(item = {}) {
     tr.classList.add('row-remove');
     setTimeout(() => {
       tr.remove();
-      ensureItemRows();
       refreshItemNo();
       updateItemSummary();
     }, 180);
   });
 
-  const codeInput = tr.querySelector('.item-code');
-  const resolveLater = debounce(() => resolveItemInput(tr, { silent: true }), 140);
+  if (!isPreloaded) {
+    const codeInput = tr.querySelector('.item-code');
+    const resolveLater = debounce(() => resolveItemInput(tr, { silent: true }), 140);
 
-  codeInput.addEventListener('focus', () => showItemSuggestions(tr, codeInput.value));
-  codeInput.addEventListener('input', () => {
-    showItemSuggestions(tr, codeInput.value);
-    resolveLater();
-    updateItemSummary();
-  });
-  codeInput.addEventListener('change', () => resolveItemInput(tr, { commitBestMatch: true }));
+    codeInput.addEventListener('focus', () => showItemSuggestions(tr, codeInput.value));
+    codeInput.addEventListener('input', () => {
+      showItemSuggestions(tr, codeInput.value);
+      resolveLater();
+      updateItemSummary();
+    });
+    codeInput.addEventListener('change', () => resolveItemInput(tr, { commitBestMatch: true }));
+  } else {
+    tr.dataset.itemFound = 'true';
+  }
 
   tr.querySelector('.item-qty').addEventListener('input', updateItemSummary);
   tr.querySelector('.item-note').addEventListener('input', updateItemSummary);
 
   refreshItemNo();
-  if (item.itemCode) resolveItemInput(tr, { commitBestMatch: true, silent: true });
   updateItemSummary();
   return tr;
 }
@@ -1865,24 +1974,43 @@ function applyPastedItems(items, startIndex) {
   if (!items.length) return toast('ไม่พบรายการที่จะวาง', 'warn');
 
   const body = document.getElementById('itemBody');
-  items.forEach((item, offset) => {
-    while (body.children.length <= startIndex + offset) addItemRow();
-    fillItemRow(body.children[startIndex + offset], item);
-  });
+  const rows = [...body.querySelectorAll('tr')];
 
-  preloadFastLookupData(currentOwnerKey, true)
-    .catch(() => null)
-    .finally(() => {
-      items.forEach((_, offset) => {
-        const tr = body.children[startIndex + offset];
-        if (tr) resolveItemInput(tr, { commitBestMatch: true, silent: true });
-      });
-      updateItemSummary();
+  let filledCount = 0;
+  let appendedCount = 0;
+
+  items.forEach(item => {
+    // Try to find matching item in preloaded list
+    const targetTr = rows.find(tr => {
+      const codeEl = tr.querySelector('.item-code');
+      const code = (codeEl.value || codeEl.textContent || '').trim().toLowerCase();
+      return code === String(item.itemCode || '').trim().toLowerCase();
     });
 
-  refreshItemNo();
+    if (targetTr) {
+      const qtyEl = targetTr.querySelector('.item-qty');
+      const noteEl = targetTr.querySelector('.item-note');
+      if (qtyEl) qtyEl.value = item.qty || '';
+      if (noteEl) noteEl.value = item.note || '';
+      filledCount++;
+    } else {
+      // Append as a new custom row
+      addItemRow({
+        itemCode: item.itemCode,
+        qty: item.qty,
+        note: item.note,
+        isPreloaded: false
+      });
+      appendedCount++;
+    }
+  });
+
   updateItemSummary();
-  toast(`วางรายการแล้ว ${items.length} แถว`, 'success');
+  refreshItemNo();
+
+  let msg = `วางข้อมูลเรียบร้อย: กรอกลงแถวเดิม ${filledCount} รายการ`;
+  if (appendedCount > 0) msg += `, เพิ่มรายการใหม่ ${appendedCount} รายการ`;
+  toast(msg, 'success');
 }
 
 async function loadLatestBranchOrder() {
@@ -1910,16 +2038,33 @@ async function loadLatestBranchOrder() {
       .filter(row => row.documentNo === latestDoc)
       .sort((a, b) => Number(a.itemNo || 0) - Number(b.itemNo || 0));
 
-    const body = document.getElementById('itemBody');
-    body.innerHTML = '';
-    latestRows.forEach(row => addItemRow({
-      itemCode: row.itemCode,
-      qty: row.qty,
-      note: row.note
-    }));
-    ensureItemRows(Math.max(DEFAULT_ITEM_ROWS, latestRows.length + 3));
+    const rows = [...document.querySelectorAll('#itemBody tr')];
+    // first, clear all qty and note fields in the table
+    rows.forEach(tr => {
+      const qtyEl = tr.querySelector('.item-qty');
+      const noteEl = tr.querySelector('.item-note');
+      if (qtyEl) qtyEl.value = '';
+      if (noteEl) noteEl.value = '';
+    });
+
+    let filledCount = 0;
+    latestRows.forEach(row => {
+      const targetTr = rows.find(tr => {
+        const codeEl = tr.querySelector('.item-code');
+        const code = (codeEl.value || codeEl.textContent || '').trim().toLowerCase();
+        return code === String(row.itemCode || '').trim().toLowerCase();
+      });
+      if (targetTr) {
+        const qtyEl = targetTr.querySelector('.item-qty');
+        const noteEl = targetTr.querySelector('.item-note');
+        if (qtyEl) qtyEl.value = row.qty || '';
+        if (noteEl) noteEl.value = row.note || '';
+        filledCount++;
+      }
+    });
+
     updateItemSummary();
-    toast(`ดึงรายการล่าสุด ${latestDoc || ''} จำนวน ${latestRows.length} รายการแล้ว`, 'success');
+    toast(`ดึงรายการล่าสุด ${latestDoc || ''} สำเร็จ (จับคู่กับตารางได้ ${filledCount} จากทั้งหมด ${latestRows.length} รายการ)`, 'success');
   } catch (err) {
     setLoading(false);
     toast(err.message || err, 'error');
@@ -1935,9 +2080,19 @@ function fillItemRow(tr, item) {
 }
 
 function isItemRowBlank(tr) {
-  return !tr.querySelector('.item-code').value.trim()
-    && !tr.querySelector('.item-qty').value.trim()
-    && !tr.querySelector('.item-note').value.trim();
+  const codeEl = tr.querySelector('.item-code');
+  if (!codeEl) return true;
+  const code = codeEl.value.trim();
+  const qtyEl = tr.querySelector('.item-qty');
+  const qty = qtyEl ? qtyEl.value.trim() : '';
+  const noteEl = tr.querySelector('.item-note');
+  const note = noteEl ? noteEl.value.trim() : '';
+  const isPreloaded = codeEl.readOnly;
+
+  if (isPreloaded) {
+    return !qty;
+  }
+  return !code && !qty && !note;
 }
 
 function isNumericLike(value) {
@@ -1955,7 +2110,9 @@ function parseQty(value) {
 function getDuplicateItemCodes() {
   const counts = {};
   [...document.querySelectorAll('#itemBody tr')].forEach(tr => {
-    const code = normalizeSearchText(tr.querySelector('.item-code').value);
+    const codeEl = tr.querySelector('.item-code');
+    if (!codeEl) return;
+    const code = normalizeSearchText(codeEl.value);
     if (!code) return;
     counts[code] = (counts[code] || 0) + 1;
   });
@@ -1968,7 +2125,9 @@ function mergeDuplicateItems() {
   let merged = 0;
 
   rows.forEach(tr => {
-    const code = normalizeSearchText(tr.querySelector('.item-code').value);
+    const codeEl = tr.querySelector('.item-code');
+    if (!codeEl) return;
+    const code = normalizeSearchText(codeEl.value);
     if (!code) return;
 
     if (!map[code]) {
@@ -1981,11 +2140,15 @@ function mergeDuplicateItems() {
     const sourceQty = tr.querySelector('.item-qty');
     const targetNote = target.querySelector('.item-note');
     const sourceNote = tr.querySelector('.item-note');
-    const qty = parseQty(targetQty.value) + parseQty(sourceQty.value);
-    const notes = [targetNote.value.trim(), sourceNote.value.trim()].filter(Boolean);
 
-    targetQty.value = qty || '';
-    targetNote.value = [...new Set(notes)].join(' / ');
+    if (targetQty && sourceQty) {
+      const qty = parseQty(targetQty.value) + parseQty(sourceQty.value);
+      targetQty.value = qty || '';
+    }
+    if (targetNote && sourceNote) {
+      const notes = [targetNote.value.trim(), sourceNote.value.trim()].filter(Boolean);
+      targetNote.value = [...new Set(notes)].join(' / ');
+    }
     tr.remove();
     merged++;
   });
@@ -1998,19 +2161,25 @@ function mergeDuplicateItems() {
 
 function collectItems() {
   const items = [...document.querySelectorAll('#itemBody tr')]
-    .map(tr => ({
-      itemCode: tr.querySelector('.item-code').value.trim(),
-      qty: parseQty(tr.querySelector('.item-qty').value),
-      note: tr.querySelector('.item-note').value.trim()
-    }))
-    .filter(item => item.itemCode || item.qty || item.note);
+    .map(tr => {
+      const codeEl = tr.querySelector('.item-code');
+      const qtyEl = tr.querySelector('.item-qty');
+      const noteEl = tr.querySelector('.item-note');
+      return {
+        itemCode: codeEl ? codeEl.value.trim() : '',
+        qty: qtyEl ? parseQty(qtyEl.value) : 0,
+        note: noteEl ? noteEl.value.trim() : ''
+      };
+    })
+    .filter(item => item.itemCode && item.qty > 0);
   updateItemSummary();
   return items;
 }
 
 function resolvePendingItemInputs() {
   [...document.querySelectorAll('#itemBody tr')].forEach(tr => {
-    if (tr.querySelector('.item-code').value.trim()) {
+    const codeEl = tr.querySelector('.item-code');
+    if (codeEl && codeEl.value.trim()) {
       resolveItemInput(tr, { commitBestMatch: true, silent: true });
     }
   });
@@ -2018,7 +2187,9 @@ function resolvePendingItemInputs() {
 
 function findUnresolvedSearchRow() {
   return [...document.querySelectorAll('#itemBody tr')].find(tr => {
-    const code = tr.querySelector('.item-code').value.trim();
+    const codeEl = tr.querySelector('.item-code');
+    if (!codeEl) return false;
+    const code = codeEl.value.trim();
     if (!code) return false;
     if (tr.dataset.itemFound === 'pending') return true;
     if (tr.dataset.itemFound === 'true') return false;
@@ -2027,12 +2198,16 @@ function findUnresolvedSearchRow() {
 }
 
 function updateItemSummary() {
-  const rows = [...document.querySelectorAll('#itemBody tr')];
+  const rows = [...document.querySelectorAll('#itemBody tr')].filter(tr => tr.querySelector('.item-code'));
   const activeRows = rows.filter(tr => !isItemRowBlank(tr));
-  const totalQty = activeRows.reduce((sum, tr) => sum + parseQty(tr.querySelector('.item-qty').value), 0);
+  const totalQty = activeRows.reduce((sum, tr) => {
+    const qtyEl = tr.querySelector('.item-qty');
+    return sum + (qtyEl ? parseQty(qtyEl.value) : 0);
+  }, 0);
   const duplicateCodes = getDuplicateItemCodes();
   const issues = activeRows.filter(tr => {
-    const code = tr.querySelector('.item-code').value.trim();
+    const codeEl = tr.querySelector('.item-code');
+    const code = codeEl ? codeEl.value.trim() : '';
     const key = normalizeSearchText(code);
     return code && (
       tr.dataset.itemFound === 'pending' ||
@@ -2042,7 +2217,8 @@ function updateItemSummary() {
   }).length;
 
   rows.forEach(tr => {
-    const key = normalizeSearchText(tr.querySelector('.item-code').value);
+    const codeEl = tr.querySelector('.item-code');
+    const key = codeEl ? normalizeSearchText(codeEl.value) : '';
     tr.classList.toggle('duplicate-row', !!key && duplicateCodes.includes(key));
   });
 
@@ -2148,8 +2324,48 @@ async function submitOrder() {
     showBranchSuggestions(branchCode);
     return toast('กรุณาเลือกสาขาจากรายการแนะนำก่อนบันทึก', 'warn');
   }
-  if (!items.length) return toast('กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ', 'warn');
-  if (items.find(x => !x.qty || x.qty <= 0)) return toast('จำนวนสั่งต้องมากกว่า 0 ทุก Item', 'warn');
+
+  // ตรวจสอบสินค้าที่ป้อนจำนวนไม่ถูกต้อง (เช่น เป็นตัวหนังสือ หรือเป็น 0 หรือติดลบ)
+  const trs = [...document.querySelectorAll('#itemBody tr')];
+  const invalidQtyItems = [];
+  trs.forEach(tr => {
+    const qtyEl = tr.querySelector('.item-qty');
+    const codeEl = tr.querySelector('.item-code');
+    const nameEl = tr.querySelector('.item-name');
+    if (qtyEl && codeEl && codeEl.value.trim()) {
+      const rawVal = qtyEl.value.trim();
+      if (rawVal) {
+        if (!isNumericLike(rawVal) || parseQty(rawVal) <= 0) {
+          invalidQtyItems.push({
+            code: codeEl.value.trim(),
+            name: nameEl ? nameEl.value.trim() : '',
+            raw: rawVal
+          });
+        }
+      }
+    }
+  });
+
+  if (invalidQtyItems.length > 0) {
+    const listHtml = invalidQtyItems.map(x => `
+      <li style="margin-bottom: 6px;">
+        <span style="font-weight:700; color: #dc2626;">[${escapeHtml(x.code)}]</span> 
+        ${escapeHtml(x.name)} 
+        <span style="color: #64748b;">(ระบุจำนวน: "${escapeHtml(x.raw)}")</span>
+      </li>
+    `).join('');
+    const confirmHtml = `
+      <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">⚠️ พบสินค้าบางรายการระบุจำนวนสั่งซื้อไม่ถูกต้อง:</div>
+      <ul style="padding-left: 20px; margin: 10px 0; max-height: 120px; overflow-y: auto; text-align: left;">
+        ${listHtml}
+      </ul>
+      <p style="margin-top: 10px; color: #475569;">รายการเหล่านี้จะ<b>ไม่ถูกส่งสั่งซื้อ</b>เนื่องจากจำนวนไม่ถูกต้อง คุณต้องการดำเนินการส่งคำสั่งซื้อต่อโดยข้ามรายการเหล่านี้ใช่หรือไม่?</p>
+    `;
+    const ok = await showConfirmModal({ title: 'พบจำนวนสินค้าไม่ถูกต้อง', htmlMessage: confirmHtml });
+    if (!ok) return;
+  }
+
+  if (!items.length) return toast('กรุณาเลือกรายการสินค้าอย่างน้อย 1 รายการเพื่อสั่งซื้อ', 'warn');
   if (duplicateCodes.length) return toast('มีรหัสสินค้าซ้ำ กรุณากดรวมรายการซ้ำหรือแก้ไขก่อนบันทึก', 'warn');
 
   const ownerConfig = OWNERS[currentOwnerKey] || OWNERS['PUN'];
@@ -2159,6 +2375,79 @@ async function submitOrder() {
   
   if (now.getHours() > cutH || (now.getHours() === cutH && now.getMinutes() > cutM)) {
     return toast(`ไม่สามารถส่งคำสั่งซื้อได้ เนื่องจากเลยเวลา Cut-off (${cutoffStr} น.) ของวันนี้ไปแล้ว`, 'error');
+  }
+
+  // 1. ตรวจสอบสั่งไม่ตรงรอบตัวเอง
+  const cycle = checkOrderCycleClient(orderDate, branch.cycleText || '');
+  if (cycle.status !== 'รอบสั่งสาขา') {
+    const cycleDesc = branch.cycleText || 'ไม่ได้กำหนดรอบในระบบ';
+    const confirmHtml = `
+      <div style="font-weight: 700; color: #d97706; margin-bottom: 8px; font-size: 16px;">⚠️ วันที่สั่งซื้อไม่ใช่รอบส่งปกติของสาขาคุณ!</div>
+      <p style="margin: 4px 0;">รอบสั่งตาม Master: <b style="color: var(--owner, #78350f);">${escapeHtml(cycleDesc)}</b></p>
+      <p style="margin: 4px 0;">วันที่คุณเลือกสั่ง: <b>${orderDate} (วัน${cycle.dayThai})</b></p>
+      <div style="margin-top: 14px; padding: 12px; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 6px; font-size: 13.5px; color: #78350f; line-height: 1.5; text-align: left;">
+        <strong>คำชี้แจง:</strong> หากยืนยันส่งสินค้าไม่ตรงรอบ ใบสั่งซื้อนี้จะเข้าระบบเพื่อรอประมวลผลจัดส่งในรอบปกติครั้งถัดไปของสาขาคุณ
+      </div>
+      <p style="margin-top: 16px; font-weight: 700; color: #334155; text-align: left;">คุณยืนยันที่จะสั่งสินค้าไม่ตรงรอบใช่หรือไม่?</p>
+    `;
+    const ok = await showConfirmModal({ title: 'ยืนยันสั่งสินค้าไม่ตรงรอบส่ง', htmlMessage: confirmHtml });
+    if (!ok) return;
+  }
+
+  // 2. ตรวจสอบยอดสั่งซื้อที่สูงเกินกำหนด (Over)
+  const overItems = items.filter(x => x.qty >= QTY_OVER_THRESHOLD);
+  if (overItems.length > 0) {
+    const listHtml = overItems.map(x => {
+      const match = trs.find(tr => {
+        const codeInput = tr.querySelector('.item-code');
+        return (codeInput.value || codeInput.textContent || '').trim().toLowerCase() === x.itemCode.toLowerCase();
+      });
+      const itemName = match ? match.querySelector('.item-name').value.trim() : '';
+      return `
+        <li style="margin-bottom: 6px;">
+          <span style="font-weight:700;">[${escapeHtml(x.itemCode)}]</span> 
+          ${escapeHtml(itemName)}: 
+          <b style="color: #dc2626; font-size: 15px;">${x.qty}</b> ชิ้น
+        </li>
+      `;
+    }).join('');
+    
+    const confirmHtml = `
+      <div style="font-weight: 700; color: #b45309; margin-bottom: 8px;">⚠️ พบรายการสินค้าที่มีจำนวนสั่งซื้อสูงผิดปกติ (ตั้งแต่ ${QTY_OVER_THRESHOLD} ชิ้นขึ้นไป):</div>
+      <ul style="padding-left: 20px; margin: 10px 0; max-height: 150px; overflow-y: auto; text-align: left;">
+        ${listHtml}
+      </ul>
+      <p style="margin-top: 14px; font-weight: 700; color: #334155; text-align: left;">คุณยืนยันที่จะสั่งซื้อรายการดังกล่าวจริงตามยอดนี้หรือไม่?</p>
+    `;
+    const ok = await showConfirmModal({ title: 'ยืนยันยอดสั่งซื้อสูงผิดปกติ', htmlMessage: confirmHtml });
+    if (!ok) return;
+  }
+
+  // 3. แจ้งเตือนส่งคำสั่งซื้อใกล้เวลา Cut-off (เหลือเวลาน้อยกว่า 15 นาที)
+  const cutoffDiffMin = ((cutH * 60 + cutM) - (now.getHours() * 60 + now.getMinutes()));
+  if (cutoffDiffMin > 0 && cutoffDiffMin <= 15) {
+    const confirmHtml = `
+      <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">⏰ คำสั่งซื้อใกล้หมดเวลาส่งของวันนี้แล้ว!</div>
+      <p style="text-align: left;">ขณะนี้เหลือเวลาอีกเพียง <b style="color: #dc2626; font-size: 18px;">${cutoffDiffMin}</b> นาที ก่อนปิดรับยอดออเดอร์ของวันนี้ (Cut-off เวลา <b>${cutoffStr} น.</b>)</p>
+      <p style="margin-top: 12px; color: #475569; text-align: left;">หากระบบบันทึกช้ากว่าเวลา Cut-off ออเดอร์นี้จะไม่ได้รับจัดส่งในรอบวันนี้ ยืนยันที่จะส่งโดยเร็วที่สุดใช่หรือไม่?</p>
+    `;
+    const ok = await showConfirmModal({ title: 'เตือนการส่งคำสั่งซื้อใกล้ปิดรอบ', htmlMessage: confirmHtml });
+    if (!ok) return;
+  }
+
+  // 4. ตรวจสอบยอดรวมทั้งหมด (Total Qty / Total Lines) ที่เยอะมากเพื่อป้องกันความผิดพลาด
+  const totalQty = items.reduce((sum, x) => sum + x.qty, 0);
+  const totalLines = items.length;
+  if (totalQty >= 1000 || totalLines >= 50) {
+    const confirmHtml = `
+      <div style="font-weight: 700; color: #1e3a8a; margin-bottom: 8px;">📦 ตรวจสอบขนาดคำสั่งซื้อขนาดใหญ่</div>
+      <p style="text-align: left;">รายการสินค้าสั่งซื้อทั้งหมด: <b style="color: var(--owner, #1f8f4d);">${totalLines} รายการ</b></p>
+      <p style="text-align: left;">จำนวนรวมทุกชิ้น (QTY): <b style="color: var(--owner, #1f8f4d);">${totalQty.toLocaleString()} ชิ้น</b></p>
+      <p style="margin-top: 12px; color: #475569; text-align: left;">ออเดอร์นี้มียอดสั่งรวมค่อนข้างสูง กรุณาตรวจสอบให้แน่ใจว่าไม่ได้ป้อนจำนวนผิดช่อง หรือสั่งเบิ้ลรายการเดิม</p>
+      <p style="margin-top: 16px; font-weight: 700; color: #334155; text-align: left;">ยืนยันว่ายอดสั่งซื้อทั้งหมดถูกต้องแล้วใช่หรือไม่?</p>
+    `;
+    const ok = await showConfirmModal({ title: 'ยืนยันขนาดคำสั่งซื้อ', htmlMessage: confirmHtml });
+    if (!ok) return;
   }
 
   setLoading(true, 'กำลังบันทึกคำสั่งสินค้า...');
@@ -2179,7 +2468,7 @@ async function submitOrder() {
     toast(`บันทึกเรียบร้อย เลขเอกสาร ${res.result.documentNo} จำนวน ${res.result.totalItems} รายการ`, 'success');
     launchConfetti();
     document.getElementById('itemBody').innerHTML = '';
-    ensureItemRows();
+    loadMasterItemsIntoTable(currentOwnerKey);
     validateContext();
   } catch (err) {
     setLoading(false);
@@ -2900,4 +3189,98 @@ function startRealtimeClock() {
 
   updateClock();
   setInterval(updateClock, 1000);
+}
+
+async function editOrder(documentNo) {
+  const order = loadedMyOrders.find(o => o.documentNo === documentNo);
+  if (!order) return toast('ไม่พบข้อมูลคำสั่งซื้อ', 'error');
+
+  const status = String(order.status || '').trim();
+  if (status !== 'รอดำเนินการ') {
+    return toast('ไม่สามารถแก้ไขออร์เดอร์นี้ได้ เนื่องจากสถานะคือ ' + status, 'warn');
+  }
+
+  setLoading(true, 'กำลังโหลดข้อมูลคำสั่งซื้อ...');
+  try {
+    currentOwnerKey = order.owner || currentOwnerKey;
+    applyOwnerStyle(currentOwnerKey);
+
+    clearOrderContext();
+    setValue('owner', currentOwnerKey);
+    const ownerConfig = OWNERS[currentOwnerKey] || OWNERS.PUN;
+    setValue('compCode', ownerConfig.compCode);
+
+    setText('orderTitle', currentOwnerKey === 'PUN' ? 'ฟอร์มสั่งสินค้า Punthai' : 'ฟอร์มสั่งสินค้า Coffee World');
+    setText('orderSubtitle', `${ownerConfig.label || ownerConfig.key} · แก้ไขคำสั่งซื้อ ${documentNo}`);
+
+    // Set order date
+    const isoDate = parseDateThToIso(order.orderDate);
+    setValue('orderDate', isoDate);
+
+    // Set branch
+    const exactBranch = getExactBranchMatch(order.branchCode);
+    if (exactBranch) {
+      chooseBranchSuggestion(exactBranch, { keepFocus: true, quiet: true });
+    } else {
+      setValue('branchCode', order.branchCode);
+      setValue('branchName', order.branchName || '');
+    }
+    if (order.branchEmail) setValue('branchEmail', order.branchEmail);
+    if (order.branchZone) setValue('branchZone', order.branchZone);
+    setValue('documentNo', order.documentNo);
+
+    // Load master items
+    await loadMasterItemsIntoTable(currentOwnerKey);
+
+    // Populate quantities and notes
+    const rows = [...document.querySelectorAll('#itemBody tr')];
+    let matchedCount = 0;
+
+    (order.items || []).forEach(item => {
+      const targetTr = rows.find(tr => {
+        const codeEl = tr.querySelector('.item-code');
+        const code = (codeEl.value || codeEl.textContent || '').trim().toLowerCase();
+        return code === String(item.itemCode || '').trim().toLowerCase();
+      });
+
+      if (targetTr) {
+        const qtyEl = targetTr.querySelector('.item-qty');
+        const noteEl = targetTr.querySelector('.item-note');
+        if (qtyEl) qtyEl.value = item.qty || '';
+        if (noteEl) noteEl.value = item.note || '';
+        matchedCount++;
+      } else {
+        // If not found in preloaded master list, we can add it as a new row
+        addItemRow({
+          itemCode: item.itemCode,
+          itemName: item.itemName,
+          itemSize: item.itemSize,
+          uom: item.uom,
+          qty: item.qty,
+          note: item.note,
+          isPreloaded: false
+        });
+      }
+    });
+
+    updateItemSummary();
+    openSection('order');
+    setLoading(false);
+    toast(`โหลดคำสั่งซื้อ ${documentNo} เพื่อแก้ไขสำเร็จ`, 'success');
+  } catch (err) {
+    setLoading(false);
+    toast(err.message || err, 'error');
+  }
+}
+
+function parseDateThToIso(dateStr) {
+  if (!dateStr) return '';
+  const parts = dateStr.split(' ')[0].split('/');
+  if (parts.length === 3) {
+    const day = parts[0].padStart(2, '0');
+    const month = parts[1].padStart(2, '0');
+    const year = parts[2];
+    return `${year}-${month}-${day}`;
+  }
+  return dateStr;
 }

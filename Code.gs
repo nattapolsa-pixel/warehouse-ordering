@@ -211,6 +211,7 @@ function apiGetFastLookupData(ownerKey) {
       generatedAt: Utilities.formatDate(new Date(), APP_CONFIG.timezone, 'yyyy-MM-dd HH:mm:ss'),
       branchMap: branchMap,
       itemMap: itemMap,
+      itemRows: itemRows,
       itemCount: itemRows.length,
       branchCount: Object.keys(branchMap || {}).length
     };
@@ -306,10 +307,39 @@ function apiSubmitOrder(payload) {
     if (!cleanItems.length) {
       throw new Error('กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ และจำนวนต้องมากกว่า 0');
     }
-
     const ss = getSs_();
     const sh = getOrCreateSheet_(ss, owner.orderSheet);
     ensureHeaders_(sh, APP_CONFIG.orderHeaders, true);
+
+    // ตรวจสอบข้อมูลออร์เดอร์เดิมเพื่อแก้ไข (Overwrite)
+    const lastRow = sh.getLastRow();
+    let isEdit = false;
+    if (lastRow >= 2) {
+      const existingValues = sh.getRange(2, 1, lastRow - 1, APP_CONFIG.orderHeaders.length).getValues();
+      
+      // ตรวจสอบสถานะของรายการที่ใช้เลขเอกสารเดียวกัน
+      for (let i = 0; i < existingValues.length; i++) {
+        const rowDoc = String(existingValues[i][5] || '').trim();
+        if (rowDoc.toLowerCase() === documentNo.toLowerCase()) {
+          const rowStatus = String(existingValues[i][16] || '').trim();
+          if (rowStatus !== 'รอดำเนินการ') {
+            throw new Error('ไม่สามารถแก้ไขคำสั่งซื้อนี้ได้ เนื่องจากสถานะคือ "' + rowStatus + '" (ได้รับการดำเนินการแล้ว)');
+          }
+          isEdit = true;
+        }
+      }
+      
+      // ลบแถวเก่าออกหากเป็นการแก้ไข (Overwrite)
+      if (isEdit) {
+        const docNumbers = sh.getRange(2, 6, lastRow - 1, 1).getValues();
+        for (let i = docNumbers.length - 1; i >= 0; i--) {
+          const cellDoc = String(docNumbers[i][0] || '').trim();
+          if (cellDoc.toLowerCase() === documentNo.toLowerCase()) {
+            sh.deleteRow(i + 2); // บวก 2 เพื่อให้ตรงกับแถวจริงในชีต (รวม header)
+          }
+        }
+      }
+    }
 
     const email = getUserEmail_();
     const rows = [];
@@ -346,14 +376,13 @@ function apiSubmitOrder(payload) {
     }
 
     appendLog_({
-      action: 'SUBMIT_ORDER',
+      action: isEdit ? 'EDIT_ORDER' : 'SUBMIT_ORDER',
       owner: owner.key,
       documentNo,
       branchCode: branch.branchCode,
-      details: 'บันทึกคำสั่งสินค้า ' + rows.length + ' รายการ',
+      details: (isEdit ? 'แก้ไข' : 'บันทึก') + 'คำสั่งสินค้า ' + rows.length + ' รายการ',
       email
     });
-
     clearDashboardCache_();
 
     notifyN8nOrderSubmitted_({
