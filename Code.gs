@@ -263,12 +263,25 @@ function apiSubmitOrder(payload) {
     const owner = getOwner_(payload.ownerKey);
     const orderDateOnly = parseIsoDate_(payload.orderDate);
     const now = new Date();
+
+    const todayOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const orderDayOnly = new Date(orderDateOnly.getFullYear(), orderDateOnly.getMonth(), orderDateOnly.getDate());
+    const maxOrderDate = new Date(todayOnly);
+    maxOrderDate.setDate(maxOrderDate.getDate() + 14);
+
+    if (orderDayOnly < todayOnly) {
+      throw new Error('ไม่สามารถเลือกวันย้อนหลังได้ กรุณาเลือกวันที่สั่งซื้อตั้งแต่วันนี้เป็นต้นไป');
+    }
+
+    if (orderDayOnly > maxOrderDate) {
+      throw new Error('ขออภัย สามารถสั่งซื้อสินค้าล่วงหน้าได้ไม่เกิน 14 วัน');
+    }
     
     const cutoffStr = owner.cutoffTime || '11:00';
     const [cutH, cutM] = cutoffStr.split(':').map(Number);
     const currentH = now.getHours();
     const currentM = now.getMinutes();
-    if (currentH > cutH || (currentH === cutH && currentM > cutM)) {
+    if (orderDayOnly.getTime() === todayOnly.getTime() && (currentH > cutH || (currentH === cutH && currentM > cutM))) {
       throw new Error('ไม่สามารถบันทึกคำสั่งซื้อได้ เนื่องจากเลยเวลา Cut-off (' + cutoffStr + ' น.) ของวันนี้ไปแล้ว');
     }
 
@@ -279,6 +292,10 @@ function apiSubmitOrder(payload) {
     const documentNo = buildDocumentNo_(branch.branchCode, orderDateOnly);
     const branchEmail = normalizeText_(payload.branchEmail) || branch.branchEmail || '';
     const branchZone = normalizeText_(payload.branchZone) || branch.branchZone || '';
+
+    if (branchEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(branchEmail)) {
+      throw new Error('รูปแบบอีเมลไม่ถูกต้อง กรุณาตรวจสอบและแก้ไขให้ถูกต้อง');
+    }
 
     const rawItems = Array.isArray(payload.items) ? payload.items : [];
     const cleanItems = rawItems

@@ -250,6 +250,7 @@
           <div class="top-actions">
             <button class="btn" onclick="openSection('home')">← กลับหน้าแรก</button>
             <button class="btn" onclick="openSelfService('cycle')">ตรวจรอบสั่ง</button>
+            <button class="btn" onclick="toggleCartDrawer()" id="headerCartBtn" style="position: relative; display: inline-flex; align-items: center; gap: 4px; font-weight: 700;">🛒 ตะกร้า <span class="cart-count">0</span></button>
             <button class="btn primary" onclick="submitOrder()">บันทึกคำสั่งสินค้า</button>
           </div>
         </div>
@@ -301,13 +302,23 @@
         <div class="topbar">
           <div class="page-title">
             <h2 style="font-size:24px;">รายการสินค้า</h2>
-            <p>ค้นจากรหัสหรือชื่อสินค้า แล้วระบบเติมข้อมูลจาก Master Item ตาม Owner</p>
+            <p>กรอกจำนวนของแต่ละรายการที่ต้องการสั่งซื้อ (พิมพ์ค้นหาในช่องขวาเพื่อกรองด่วน)</p>
           </div>
-          <div class="top-actions">
-            <button class="btn" onclick="addItemRow()">＋ เพิ่มแถว</button>
-            <button class="btn" onclick="pasteItemRows()">📋 วางจาก Excel</button>
-            <button class="btn" onclick="mergeDuplicateItems()">รวมรายการซ้ำ</button>
-            <button class="btn" onclick="loadLatestBranchOrder()">ดึงรายการล่าสุด</button>
+          <div class="top-actions" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <div class="search-box-container">
+              <span class="search-icon">🔍</span>
+              <input type="text" id="itemTableFilter" placeholder="พิมพ์รหัส / ชื่อสินค้า / UOM..." autocomplete="off">
+              <button id="clearItemFilter" class="clear-btn" type="button" title="ล้างการค้นหา">×</button>
+            </div>
+            <button class="btn" id="showCartOnlyBtn" onclick="toggleShowCartOnly()" type="button" style="font-weight: 700; min-height: 44px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;">
+              🛒 แสดงเฉพาะที่เลือก
+            </button>
+            <button class="btn" id="showFavoritesOnlyBtn" onclick="toggleShowFavoritesOnly()" type="button" style="font-weight: 700; min-height: 44px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;">
+              ⭐ สั่งประจำ
+            </button>
+            <button class="btn" id="reorderLastBtn" onclick="reorderLastOrder()" type="button" style="font-weight: 700; min-height: 44px; display: none; align-items: center; gap: 6px; white-space: nowrap; border-color: rgba(245, 158, 11, 0.2); background: rgba(245, 158, 11, 0.05); color: #d97706;">
+              🔄 สั่งซ้ำรอบล่าสุด
+            </button>
           </div>
         </div>
         <div class="item-sheet-summary" aria-live="polite">
@@ -343,6 +354,9 @@
           </div>
         </div>
         <div class="floating-right">
+          <button class="btn primary-accent floating-cart-btn" onclick="toggleCartDrawer()" id="floatingCartBtn" style="position: relative; margin-right: 8px; display: inline-flex; align-items: center; gap: 4px; font-weight: 700;">
+            🛒 ตะกร้า <span class="cart-count">0</span>
+          </button>
           <button class="btn-circle scroll-top-btn" onclick="window.scrollTo({top: 0, behavior: 'smooth'})" title="เลื่อนขึ้นบน">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
           </button>
@@ -571,6 +585,49 @@
     </div>
   </div>
 
+  <!-- Shopping Cart Drawer -->
+  <div class="cart-drawer" id="cartDrawer" aria-hidden="true">
+    <div class="cart-drawer-overlay" onclick="toggleCartDrawer(false)"></div>
+    <div class="cart-drawer-content">
+      <header class="cart-drawer-header">
+        <div class="cart-header-title">
+          <h3>🛒 ตะกร้าสินค้า</h3>
+          <span class="cart-subtitle" id="cartSubtitle">รายการสินค้าที่คุณเลือกสั่งซื้อ</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button class="btn" style="color: var(--danger) !important; border-color: rgba(239, 68, 68, 0.2) !important; background: rgba(239, 68, 68, 0.05) !important; padding: 6px 12px; font-size: 12px; font-weight: 700; min-height: auto; height: 36px; border-radius: 8px !important;" onclick="clearAllCart()" id="clearCartBtn" type="button">ล้างตะกร้า</button>
+          <button class="cart-drawer-close" onclick="toggleCartDrawer(false)" aria-label="ปิด">×</button>
+        </div>
+      </header>
+      
+      <div class="cart-drawer-body" id="cartDrawerBody">
+        <!-- Cart items will be rendered here dynamically -->
+      </div>
+      
+      <footer class="cart-drawer-footer">
+        <div class="cart-summary-details">
+          <div class="cart-summary-row">
+            <span>รายการสินค้า:</span>
+            <b id="cartTotalItems">0 รายการ</b>
+          </div>
+          <div class="cart-summary-row">
+            <span>จำนวนชิ้นรวม:</span>
+            <b id="cartTotalQty">0 ชิ้น</b>
+          </div>
+        </div>
+        <div class="cart-drawer-actions">
+          <button class="btn" style="background: var(--bg); color: var(--text); border: 1px solid var(--line);" onclick="toggleCartDrawer(false)">เลือกสินค้าเพิ่ม</button>
+          <button class="btn primary" id="cartSubmitBtn" onclick="submitOrderFromCart()">บันทึกคำสั่งสินค้า</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Persistent Floating Cart Button (Floating Action Button / FAB) -->
+  <button class="fixed-cart-btn" id="fixedCartBtn" onclick="toggleCartDrawer()" title="เปิดตะกร้าสินค้า" aria-label="เปิดตะกร้าสินค้า">
+    <span class="fixed-cart-icon">🛒</span>
+    <span class="cart-count fixed-cart-badge">0</span>
+  </button>
 
   <div class="loading" id="loading"><div class="loader-card"><div class="spinner"></div><span id="loadingText">กำลังประมวลผล...</span></div></div>
   <div class="toast-stack" id="toastStack"></div>

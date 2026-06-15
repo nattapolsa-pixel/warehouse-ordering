@@ -41,6 +41,14 @@ const ADMIN_TOKEN_STORAGE_KEY = 'warehouseOrderingAdminToken';
 const ADMIN_EMAIL_STORAGE_KEY = 'warehouseOrderingAdminEmail';
 const ADMIN_EXPIRES_STORAGE_KEY = 'warehouseOrderingAdminExpiresAt';
 let currentOwnerKey = 'PUN';
+let isSubmittingOrder = false;
+let editingDocumentNo = '';
+let branchFavorites = new Set();
+let lastOrderData = null;
+let showCartOnly = false;
+let showFavoritesOnly = false;
+let lastLoadedBranchCode = null;
+let lastLoadedOwnerKey = null;
 let contextTimer = null;
 let masterTimer = null;
 let lastCycleExport = null;
@@ -54,6 +62,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   armBranchSearch();
   armSelfServiceSearch();
   armTrackOrderSearch();
+  armItemTableFilter();
   armAdminLoginModal();
   armConfirmModal();
   startRealtimeClock();
@@ -186,6 +195,15 @@ function openSection(id) {
   document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
   const section = document.getElementById(id);
   if (section) section.classList.add('active');
+
+  // Toggle persistent floating cart button
+  const fixedCartBtn = document.getElementById('fixedCartBtn');
+  if (fixedCartBtn) {
+    fixedCartBtn.style.display = (id === 'order') ? 'flex' : 'none';
+  }
+  if (id !== 'order') {
+    toggleCartDrawer(false);
+  }
 
   if (id === 'portal') loadPortalSummary();
   if (id === 'dashboard') loadDashboard();
@@ -1363,6 +1381,10 @@ function validateContextLocal(branchCode, orderDate) {
   setCycleStatus(cycle.status);
   setText('cycleHelper', `วันที่เลือกคือวัน${cycle.dayThai} (${cycle.dayShort}) · รอบใน Master: ${branch.cycleText || '-'}`);
   updateOrderHealth();
+
+  // Load favorites and last order history asynchronously
+  loadBranchOrderHistoryData(branch.branchCode);
+
   return true;
 }
 
@@ -1384,6 +1406,9 @@ function validateContextServer(branchCode, orderDate) {
       setCycleStatus(ctx.orderCycleStatus);
       setText('cycleHelper', `วันที่เลือกคือวัน${ctx.orderDayTh} (${ctx.orderDay}) · รอบใน Master: ${ctx.cycleText || '-'}`);
       updateOrderHealth();
+
+      // Load favorites and last order history asynchronously
+      loadBranchOrderHistoryData(ctx.branchCode);
     })
     .catch(err => {
       clearOrderContext();
@@ -1398,6 +1423,21 @@ function clearOrderContext() {
   setValue('documentNo', '');
   setCycleStatus('');
   setText('cycleHelper', '');
+
+  editingDocumentNo = '';
+  branchFavorites.clear();
+  lastOrderData = null;
+  showCartOnly = false;
+  showFavoritesOnly = false;
+  lastLoadedBranchCode = null;
+  lastLoadedOwnerKey = null;
+  const showCartBtn = document.getElementById('showCartOnlyBtn');
+  if (showCartBtn) showCartBtn.classList.remove('active');
+  const showFavBtn = document.getElementById('showFavoritesOnlyBtn');
+  if (showFavBtn) showFavBtn.classList.remove('active');
+  updateReorderBtnState();
+  applyFavoritesToTable();
+
   updateOrderHealth();
 }
 
@@ -1422,6 +1462,27 @@ const ITEM_SUGGEST_LIMIT = 8;
 const DEFAULT_ITEM_ROWS = 14;
 const QTY_OVER_THRESHOLD = 100;
 let itemTableArmed = false;
+let nextItemRowId = 1;
+
+function getItemRows() {
+  return [...document.querySelectorAll('#itemBody tr')].filter(tr => tr.querySelector('.item-code'));
+}
+
+function ensureItemRowId(tr) {
+  if (!tr.dataset.rowId) {
+    tr.dataset.rowId = String(nextItemRowId++);
+  }
+  return tr.dataset.rowId;
+}
+
+function getItemRowById(rowId) {
+  const key = String(rowId || '');
+  return getItemRows().find(tr => tr.dataset.rowId === key);
+}
+
+function getSelectedItemRows() {
+  return getItemRows().filter(tr => parseQty(tr.querySelector('.item-qty')?.value) > 0);
+}
 
 function ensureItemRows(minRows = DEFAULT_ITEM_ROWS) {
   const body = document.getElementById('itemBody');
@@ -1434,6 +1495,19 @@ function ensureItemRows(minRows = DEFAULT_ITEM_ROWS) {
 async function loadMasterItemsIntoTable(ownerKey) {
   const body = document.getElementById('itemBody');
   if (!body) return;
+
+  const filterInput = document.getElementById('itemTableFilter');
+  if (filterInput) {
+    filterInput.value = '';
+    const clearBtn = document.getElementById('clearItemFilter');
+    if (clearBtn) clearBtn.style.display = 'none';
+  }
+
+  showCartOnly = false;
+  const showCartOnlyBtn = document.getElementById('showCartOnlyBtn');
+  if (showCartOnlyBtn) {
+    showCartOnlyBtn.classList.remove('active');
+  }
 
   body.innerHTML = '<tr><td colspan="8"><div class="empty">กำลังโหลดรายการสินค้าจาก Master...</div></td></tr>';
   updateItemSummary();
@@ -1461,6 +1535,7 @@ async function loadMasterItemsIntoTable(ownerKey) {
     });
 
     refreshItemNo();
+    applyFavoritesToTable();
     updateItemSummary();
   } catch (err) {
     body.innerHTML = `<tr><td colspan="8"><div class="empty danger">โหลดรายการสินค้าไม่สำเร็จ: ${err.message || err}</div></td></tr>`;
@@ -1473,6 +1548,7 @@ function addItemRow(item = {}) {
   const body = document.getElementById('itemBody');
   const tr = document.createElement('tr');
   const isPreloaded = !!item.isPreloaded;
+  ensureItemRowId(tr);
 
   tr.innerHTML = `
     <td class="item-no"></td>
@@ -1486,7 +1562,13 @@ function addItemRow(item = {}) {
     <td><input type="text" class="item-name" readonly placeholder="${isPreloaded ? '' : 'ระบบจะดึงชื่อ Item'}" value="${escapeAttr(item.itemName || '')}"></td>
     <td><input type="text" class="item-size" readonly placeholder="${isPreloaded ? '' : 'ขนาดบรรจุ'}" value="${escapeAttr(item.itemSize || '')}"></td>
     <td><input type="text" class="item-uom" readonly placeholder="${isPreloaded ? '' : 'UOM'}" value="${escapeAttr(item.uom || '')}"></td>
-    <td><input type="number" class="item-qty grid-input" data-col="qty" min="1" step="1" placeholder="จำนวน" value="${escapeAttr(item.qty || '')}"></td>
+    <td>
+      <div class="qty-stepper table-stepper">
+        <button type="button" class="stepper-btn minus" onclick="adjustTableRowQty(this, -1)">-</button>
+        <input type="number" class="item-qty grid-input stepper-input" data-col="qty" min="1" step="1" placeholder="จำนวน" value="${escapeAttr(item.qty || '')}">
+        <button type="button" class="stepper-btn plus" onclick="adjustTableRowQty(this, 1)">+</button>
+      </div>
+    </td>
     <td><textarea class="item-note grid-input" data-col="note" placeholder="หมายเหตุ">${escapeHtml(item.note || '')}</textarea></td>
     <td class="row-action-cell"><button class="row-delete" type="button" aria-label="ลบรายการ" title="ลบรายการ">×</button></td>
   `;
@@ -1519,7 +1601,10 @@ function addItemRow(item = {}) {
     tr.dataset.itemFound = 'true';
   }
 
-  tr.querySelector('.item-qty').addEventListener('input', updateItemSummary);
+  tr.querySelector('.item-qty').addEventListener('input', () => {
+    updateItemSummary();
+    filterItemTable();
+  });
   tr.querySelector('.item-note').addEventListener('input', updateItemSummary);
 
   refreshItemNo();
@@ -1528,8 +1613,10 @@ function addItemRow(item = {}) {
 }
 
 function refreshItemNo() {
-  [...document.querySelectorAll('#itemBody tr')].forEach((tr, index) => {
-    tr.querySelector('.item-no').textContent = index + 1;
+  let seq = 1;
+  getItemRows().forEach(tr => {
+    const noCell = tr.querySelector('.item-no');
+    if (noCell) noCell.textContent = seq++;
   });
 }
 
@@ -2085,6 +2172,7 @@ async function loadLatestBranchOrder() {
     });
 
     updateItemSummary();
+    filterItemTable();
     toast(`ดึงรายการล่าสุด ${latestDoc || ''} สำเร็จ (จับคู่กับตารางได้ ${filledCount} จากทั้งหมด ${latestRows.length} รายการ)`, 'success');
   } catch (err) {
     setLoading(false);
@@ -2133,6 +2221,8 @@ function getDuplicateItemCodes() {
   [...document.querySelectorAll('#itemBody tr')].forEach(tr => {
     const codeEl = tr.querySelector('.item-code');
     if (!codeEl) return;
+    const qtyEl = tr.querySelector('.item-qty');
+    if (!qtyEl || parseQty(qtyEl.value) <= 0) return;
     const code = normalizeSearchText(codeEl.value);
     if (!code) return;
     counts[code] = (counts[code] || 0) + 1;
@@ -2150,6 +2240,8 @@ function mergeDuplicateItems() {
     if (!codeEl) return;
     const code = normalizeSearchText(codeEl.value);
     if (!code) return;
+    const sourceQty = tr.querySelector('.item-qty');
+    if (!sourceQty || parseQty(sourceQty.value) <= 0) return;
 
     if (!map[code]) {
       map[code] = tr;
@@ -2158,7 +2250,6 @@ function mergeDuplicateItems() {
 
     const target = map[code];
     const targetQty = target.querySelector('.item-qty');
-    const sourceQty = tr.querySelector('.item-qty');
     const targetNote = target.querySelector('.item-note');
     const sourceNote = tr.querySelector('.item-note');
 
@@ -2170,12 +2261,21 @@ function mergeDuplicateItems() {
       const notes = [targetNote.value.trim(), sourceNote.value.trim()].filter(Boolean);
       targetNote.value = [...new Set(notes)].join(' / ');
     }
-    tr.remove();
+
+    if (codeEl.readOnly) {
+      sourceQty.value = '';
+      if (sourceNote) sourceNote.value = '';
+      tr.classList.remove('duplicate-row');
+    } else {
+      tr.remove();
+    }
     merged++;
   });
 
   ensureItemRows();
+  refreshItemNo();
   updateItemSummary();
+  filterItemTable();
   if (merged) toast(`รวมรายการซ้ำแล้ว ${merged} แถว`, 'success');
   else toast('ไม่พบรายการซ้ำให้รวม', 'warn');
 }
@@ -2219,8 +2319,9 @@ function findUnresolvedSearchRow() {
 }
 
 function updateItemSummary() {
-  const rows = [...document.querySelectorAll('#itemBody tr')].filter(tr => tr.querySelector('.item-code'));
+  const rows = getItemRows();
   const activeRows = rows.filter(tr => !isItemRowBlank(tr));
+  const cartRows = rows.filter(tr => parseQty(tr.querySelector('.item-qty')?.value) > 0);
   const totalQty = activeRows.reduce((sum, tr) => {
     const qtyEl = tr.querySelector('.item-qty');
     return sum + (qtyEl ? parseQty(qtyEl.value) : 0);
@@ -2240,7 +2341,8 @@ function updateItemSummary() {
   rows.forEach(tr => {
     const codeEl = tr.querySelector('.item-code');
     const key = codeEl ? normalizeSearchText(codeEl.value) : '';
-    tr.classList.toggle('duplicate-row', !!key && duplicateCodes.includes(key));
+    const qty = parseQty(tr.querySelector('.item-qty')?.value);
+    tr.classList.toggle('duplicate-row', !!key && qty > 0 && duplicateCodes.includes(key));
   });
 
   setAnimatedText('itemSummaryRows', numberFmt(activeRows.length));
@@ -2250,6 +2352,17 @@ function updateItemSummary() {
   // Update floating bar values
   setAnimatedText('floatSummaryRows', numberFmt(activeRows.length));
   setAnimatedText('floatSummaryQty', numberFmt(totalQty));
+  
+  // Update cart badge counts
+  document.querySelectorAll('.cart-count').forEach(el => {
+    el.textContent = cartRows.length;
+  });
+
+  // Re-render cart drawer if open
+  const cartDrawer = document.getElementById('cartDrawer');
+  if (cartDrawer && cartDrawer.classList.contains('active')) {
+    renderCartDrawer();
+  }
   
   updateOrderHealth({ activeRows, totalQty, issues });
 }
@@ -2319,11 +2432,12 @@ async function submitOrder() {
   if (isSubmittingOrder) return;
   isSubmittingOrder = true;
 
-  const submitBtn = document.querySelector('button[onclick="submitOrder()"]');
-  if (submitBtn) {
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'กำลังบันทึกคำสั่งสินค้า...';
-  }
+  const submitButtons = [...document.querySelectorAll('button[onclick="submitOrder()"], #cartSubmitBtn')];
+  const submitButtonLabels = submitButtons.map(btn => [btn, btn.textContent]);
+  submitButtons.forEach(btn => {
+    btn.disabled = true;
+    btn.textContent = 'กำลังบันทึกคำสั่งสินค้า...';
+  });
 
   try {
     try {
@@ -2461,51 +2575,51 @@ async function submitOrder() {
     }
 
     // 6. ตรวจจับการสั่งออเดอร์ซ้ำซ้อนในวันเดียวกัน (Duplicate Order Protection)
-    const isCreateMode = !getValue('documentNo');
-    if (isCreateMode) {
-      try {
-        setLoading(true, 'กำลังตรวจสอบประวัติสั่งซื้อเพื่อป้องกันการสั่งซ้ำ...');
-        const res = await apiRequest('myOrders', { ownerKey: currentOwnerKey, branchCode, limit: 120 });
-        setLoading(false);
-        if (res && res.orders) {
-          const existingOrder = res.orders.find(o => parseDateThToIso(o.orderDate) === orderDate);
-          if (existingOrder) {
-            const confirmHtml = `
-              <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">⚠️ ตรวจพบใบสั่งซื้อซ้ำซ้อนในระบบ!</div>
-              <p style="text-align: left;">สาขาของคุณได้ส่งคำสั่งซื้อสำหรับรอบวันที่ <b>${orderDate}</b> ไปเรียบร้อยแล้ว</p>
-              <div style="margin: 12px 0; padding: 12px; background: #fef2f2; border-left: 4px solid #ef4444; border-radius: 6px; font-size: 13.5px; color: #991b1b; text-align: left; line-height: 1.5;">
-                <strong>ข้อมูลออเดอร์เดิมในระบบ:</strong><br>
-                • เลขที่เอกสาร: <b>${escapeHtml(existingOrder.documentNo)}</b><br>
-                • วันที่บันทึก: <b>${escapeHtml(existingOrder.submittedAt)}</b><br>
-                • รายการทั้งหมด: <b>${existingOrder.totalRows || existingOrder.items?.length || 0} รายการ</b> (จำนวนรวม <b>${existingOrder.totalQty} ชิ้น</b>)
-              </div>
-              <p style="margin-top: 14px; color: #475569; text-align: left;">เพื่อป้องกันการส่งออเดอร์ซ้ำซ้อน ระบบไม่ยอมให้สร้างใบสั่งซื้อใหม่ในวันที่นี้อีก หากต้องการปรับปรุงรายการสั่ง กรุณาทำการ <b>"แก้ไข"</b> ออเดอร์เดิมจากหน้าประวัติ</p>
-            `;
-            await showConfirmModal({
-              title: 'ส่งคำสั่งซื้อซ้ำซ้อน',
-              htmlMessage: confirmHtml,
-              confirmText: 'ไปดูรายการสั่งซื้อเดิม',
-              cancelText: ''
-            });
-            
-            // Switch tab
-            openSection('trackOrder');
-            const trackInput = document.getElementById('trackBranchCode');
-            if (trackInput) {
-              trackInput.value = branchCode;
-              const exactBranch = getExactBranchMatch(branchCode);
-              if (exactBranch) {
-                chooseTrackBranchSuggestion(exactBranch);
-              } else {
-                loadMyOrders({ quiet: true });
-              }
+    try {
+      const editingDocKey = normalizeSearchText(editingDocumentNo);
+      setLoading(true, 'กำลังตรวจสอบประวัติสั่งซื้อเพื่อป้องกันการสั่งซ้ำ...');
+      const res = await apiRequest('myOrders', { ownerKey: currentOwnerKey, branchCode, limit: 120 });
+      setLoading(false);
+      if (res && res.orders) {
+        const existingOrder = res.orders.find(o => (
+          parseDateThToIso(o.orderDate) === orderDate &&
+          normalizeSearchText(o.documentNo) !== editingDocKey
+        ));
+        if (existingOrder) {
+          const confirmHtml = `
+            <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">⚠️ ตรวจพบใบสั่งซื้อซ้ำซ้อนในระบบ!</div>
+            <p style="text-align: left;">สาขาของคุณได้ส่งคำสั่งซื้อสำหรับรอบวันที่ <b>${orderDate}</b> ไปเรียบร้อยแล้ว</p>
+            <div style="margin: 12px 0; padding: 12px; background: #fef2f2; border-left: 4px solid #ef4444; border-radius: 6px; font-size: 13.5px; color: #991b1b; text-align: left; line-height: 1.5;">
+              <strong>ข้อมูลออเดอร์เดิมในระบบ:</strong><br>
+              • เลขที่เอกสาร: <b>${escapeHtml(existingOrder.documentNo)}</b><br>
+              • วันที่บันทึก: <b>${escapeHtml(existingOrder.submittedAt)}</b><br>
+              • รายการทั้งหมด: <b>${existingOrder.totalRows || existingOrder.items?.length || 0} รายการ</b> (จำนวนรวม <b>${existingOrder.totalQty} ชิ้น</b>)
+            </div>
+            <p style="margin-top: 14px; color: #475569; text-align: left;">เพื่อป้องกันการส่งออเดอร์ซ้ำซ้อน ระบบไม่ยอมให้สร้างใบสั่งซื้อใหม่ในวันที่นี้อีก หากต้องการปรับปรุงรายการสั่ง กรุณาทำการ <b>"แก้ไข"</b> ออเดอร์เดิมจากหน้าประวัติ</p>
+          `;
+          await showConfirmModal({
+            title: 'ส่งคำสั่งซื้อซ้ำซ้อน',
+            htmlMessage: confirmHtml,
+            confirmText: 'ไปดูรายการสั่งซื้อเดิม',
+            cancelText: ''
+          });
+
+          openSection('trackOrder');
+          const trackInput = document.getElementById('trackBranchCode');
+          if (trackInput) {
+            trackInput.value = branchCode;
+            const exactBranch = getExactBranchMatch(branchCode);
+            if (exactBranch) {
+              chooseTrackBranchSuggestion(exactBranch);
+            } else {
+              loadMyOrders({ quiet: true });
             }
-            return;
           }
+          return;
         }
-      } catch (err) {
-        setLoading(false); // Fallback and allow if API fails
       }
+    } catch (err) {
+      setLoading(false); // Fallback and allow if API fails
     }
 
     const ownerConfig = OWNERS[currentOwnerKey] || OWNERS['PUN'];
@@ -2611,6 +2725,7 @@ async function submitOrder() {
 
     toast(`บันทึกเรียบร้อย เลขเอกสาร ${res.result.documentNo} จำนวน ${res.result.totalItems} รายการ`, 'success');
     launchConfetti();
+    editingDocumentNo = '';
     document.getElementById('itemBody').innerHTML = '';
     loadMasterItemsIntoTable(currentOwnerKey);
     validateContext();
@@ -2619,10 +2734,10 @@ async function submitOrder() {
     toast(err.message || err, 'error');
   } finally {
     isSubmittingOrder = false;
-    if (submitBtn) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'บันทึกคำสั่งสินค้า';
-    }
+    submitButtonLabels.forEach(([btn, label]) => {
+      btn.disabled = false;
+      btn.textContent = label || 'บันทึกคำสั่งสินค้า';
+    });
   }
 }
 
@@ -3356,6 +3471,7 @@ async function editOrder(documentNo) {
     applyOwnerStyle(currentOwnerKey);
 
     clearOrderContext();
+    editingDocumentNo = order.documentNo || documentNo;
     setValue('owner', currentOwnerKey);
     const ownerConfig = OWNERS[currentOwnerKey] || OWNERS.PUN;
     setValue('compCode', ownerConfig.compCode);
@@ -3433,4 +3549,561 @@ function parseDateThToIso(dateStr) {
     return `${year}-${month}-${day}`;
   }
   return dateStr;
+}
+
+/* =========================================================
+   Smart Item Table Search Filter
+   ========================================================= */
+function armItemTableFilter() {
+  const input = document.getElementById('itemTableFilter');
+  const clearBtn = document.getElementById('clearItemFilter');
+  if (!input) return;
+
+  input.addEventListener('input', filterItemTable);
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      filterItemTable();
+      input.focus();
+    });
+  }
+
+  // Keyboard shortcut '/' to focus filter search box
+  document.addEventListener('keydown', e => {
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+      return;
+    }
+    if (e.key === '/') {
+      const orderSec = document.getElementById('order');
+      if (orderSec && orderSec.classList.contains('active')) {
+        e.preventDefault();
+        input.focus();
+        input.select();
+      }
+    }
+  });
+}
+
+function filterItemTable() {
+  const filterVal = (document.getElementById('itemTableFilter')?.value || '').trim().toLowerCase();
+  const clearBtn = document.getElementById('clearItemFilter');
+  if (clearBtn) {
+    clearBtn.style.display = filterVal ? 'block' : 'none';
+  }
+
+  const rows = [...document.querySelectorAll('#itemBody tr')];
+  const itemRows = rows.filter(tr => tr.id !== 'itemTableNoResult' && tr.querySelector('.item-code'));
+  let visibleCount = 0;
+  const terms = filterVal.split(/\s+/).filter(Boolean);
+
+  itemRows.forEach(tr => {
+    const codeEl = tr.querySelector('.item-code');
+    const nameEl = tr.querySelector('.item-name');
+    const uomEl = tr.querySelector('.item-uom');
+    const qtyEl = tr.querySelector('.item-qty');
+
+    const code = (codeEl?.value || codeEl?.textContent || '').trim().toLowerCase();
+    const name = (nameEl?.value || nameEl?.textContent || '').trim().toLowerCase();
+    const uom = (uomEl?.value || uomEl?.textContent || '').trim().toLowerCase();
+    const qty = qtyEl ? parseQty(qtyEl.value) : 0;
+
+    // Check if row matches all typed terms (multi-keyword)
+    const matchesText = terms.every(term => 
+      code.includes(term) || name.includes(term) || uom.includes(term)
+    );
+
+    // Check if we only want items in the cart
+    const matchesCart = !showCartOnly || qty > 0;
+
+    // Check if we only want favorite items
+    const isFavorite = tr.dataset.isFavorite === 'true';
+    const matchesFavorite = !showFavoritesOnly || isFavorite;
+
+    if (matchesText && matchesCart && matchesFavorite) {
+      tr.style.display = '';
+      visibleCount++;
+    } else {
+      tr.style.display = 'none';
+    }
+  });
+
+  // Handle "No results found" row
+  let noResultRow = document.getElementById('itemTableNoResult');
+  const noResultTitle = showCartOnly
+    ? 'ยังไม่มีสินค้าในตะกร้า'
+    : (showFavoritesOnly
+      ? 'ยังไม่มีสินค้าสั่งประจำสำหรับสาขานี้'
+      : `ไม่พบรายการสินค้าที่ตรงกับ "${filterVal}"`);
+  const noResultHint = showCartOnly
+    ? 'กรอกจำนวนสินค้าในตาราง แล้วรายการที่เลือกจะมาแสดงในมุมมองนี้'
+    : (showFavoritesOnly
+      ? 'ระบบจะแสดงสินค้าสั่งประจำหลังเลือกสาขาที่มีประวัติการสั่งซื้อ'
+      : 'ลองค้นหาด้วยคำอื่น หรือกดปุ่มกากบาท (×) เพื่อล้างการค้นหา');
+
+  if (visibleCount === 0 && itemRows.length > 0) {
+    if (!noResultRow) {
+      noResultRow = document.createElement('tr');
+      noResultRow.id = 'itemTableNoResult';
+      noResultRow.innerHTML = `
+        <td colspan="8">
+          <div class="empty warning" style="padding: 32px 24px; text-align: center; background: #fffbeb !important; border: 1px solid #fde68a !important; border-radius: var(--radius-md) !important;">
+            <div style="font-size: 28px; margin-bottom: 12px;">${showCartOnly ? '🛒' : '🔍'}</div>
+            <div class="no-result-title" style="font-weight: 800; color: #b45309; font-size: 16px;">${escapeHtml(noResultTitle)}</div>
+            <div class="no-result-hint" style="font-size: 13px; color: #d97706; margin-top: 6px; font-weight: 600;">${escapeHtml(noResultHint)}</div>
+          </div>
+        </td>
+      `;
+      document.getElementById('itemBody').appendChild(noResultRow);
+    } else {
+      const iconEl = noResultRow.querySelector('.empty div:first-child');
+      const titleEl = noResultRow.querySelector('.no-result-title');
+      const hintEl = noResultRow.querySelector('.no-result-hint');
+      if (iconEl) iconEl.textContent = showCartOnly ? '🛒' : '🔍';
+      if (titleEl) titleEl.textContent = noResultTitle;
+      if (hintEl) hintEl.textContent = noResultHint;
+      noResultRow.style.display = '';
+    }
+  } else if (noResultRow) {
+    noResultRow.style.display = 'none';
+  }
+
+  // Refresh sequential numbering for visible rows
+  let seq = 1;
+  itemRows.forEach(tr => {
+    if (tr.style.display !== 'none') {
+      const noCell = tr.querySelector('.item-no');
+      if (noCell) noCell.textContent = seq++;
+    }
+  });
+}
+
+/* =========================================================
+   Reorder Last Order & Frequently Ordered (Favorites) Logic
+   ========================================================= */
+
+async function loadBranchOrderHistoryData(branchCode) {
+  if (!branchCode) {
+    lastLoadedBranchCode = null;
+    lastLoadedOwnerKey = null;
+    branchFavorites.clear();
+    lastOrderData = null;
+    updateReorderBtnState();
+    applyFavoritesToTable();
+    return;
+  }
+
+  const normBranchCode = String(branchCode).trim().toUpperCase();
+  const ownerKey = currentOwnerKey;
+  if (lastLoadedBranchCode === normBranchCode && lastLoadedOwnerKey === ownerKey) {
+    return;
+  }
+
+  lastLoadedBranchCode = normBranchCode;
+  lastLoadedOwnerKey = ownerKey;
+
+  try {
+    const res = await apiRequest('myOrders', { ownerKey, branchCode: normBranchCode, limit: 5 });
+    if (lastLoadedBranchCode !== normBranchCode || lastLoadedOwnerKey !== ownerKey) return;
+    if (res && res.ok && res.orders && res.orders.length > 0) {
+      lastOrderData = res.orders[0];
+
+      const counts = {};
+      const totalOrders = res.orders.length;
+      res.orders.forEach(order => {
+        if (!order.items) return;
+        const uniqueItems = new Set(order.items.map(item => String(item.itemCode || '').trim().toLowerCase()));
+        uniqueItems.forEach(code => {
+          counts[code] = (counts[code] || 0) + 1;
+        });
+      });
+
+      branchFavorites.clear();
+      const threshold = totalOrders >= 2 ? 2 : 1;
+      Object.entries(counts).forEach(([code, count]) => {
+        if (count >= threshold) {
+          branchFavorites.add(code);
+        }
+      });
+    } else {
+      lastOrderData = null;
+      branchFavorites.clear();
+    }
+  } catch (err) {
+    if (lastLoadedBranchCode !== normBranchCode || lastLoadedOwnerKey !== ownerKey) return;
+    console.error('Error loading branch history for favorites/reorder:', err);
+    lastOrderData = null;
+    branchFavorites.clear();
+  }
+
+  updateReorderBtnState();
+  applyFavoritesToTable();
+}
+
+function updateReorderBtnState() {
+  const btn = document.getElementById('reorderLastBtn');
+  if (!btn) return;
+
+  if (lastOrderData) {
+    btn.style.display = 'inline-flex';
+    btn.title = `คัดลอกจากเลขที่เอกสาร ${lastOrderData.documentNo || '-'}`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+function applyFavoritesToTable() {
+  const rows = document.querySelectorAll('#itemBody tr');
+  rows.forEach(tr => {
+    if (tr.id === 'itemTableNoResult') return;
+    const codeEl = tr.querySelector('.item-code');
+    if (!codeEl) return;
+    const code = String(codeEl.value || '').trim().toLowerCase();
+
+    const isFav = branchFavorites.has(code);
+    tr.dataset.isFavorite = isFav ? 'true' : 'false';
+
+    let favBadge = tr.querySelector('.fav-badge');
+    if (isFav) {
+      if (!favBadge) {
+        const nameInput = tr.querySelector('.item-name');
+        if (nameInput && nameInput.parentElement) {
+          favBadge = document.createElement('span');
+          favBadge.className = 'fav-badge';
+          favBadge.innerHTML = '⭐ สั่งบ่อย';
+          favBadge.title = 'สินค้าที่สาขาสั่งซื้อเป็นประจำ';
+          const cell = nameInput.parentElement;
+          cell.style.position = 'relative';
+          cell.style.display = 'flex';
+          cell.style.alignItems = 'center';
+          cell.appendChild(favBadge);
+        }
+      }
+    } else {
+      if (favBadge) favBadge.remove();
+    }
+  });
+
+  filterItemTable();
+}
+
+function toggleShowFavoritesOnly() {
+  const btn = document.getElementById('showFavoritesOnlyBtn');
+  if (!btn) return;
+
+  const branchCode = getValue('branchCode').trim();
+  if (!branchCode) {
+    toast('กรุณาระบุรหัสสาขาก่อนกรองสินค้าแนะนำ', 'warn');
+    document.getElementById('branchCode')?.focus();
+    return;
+  }
+
+  showFavoritesOnly = !showFavoritesOnly;
+  btn.classList.toggle('active', showFavoritesOnly);
+  filterItemTable();
+}
+
+async function reorderLastOrder() {
+  const branchCode = getValue('branchCode').trim();
+  if (!branchCode) {
+    toast('กรุณาระบุรหัสสาขาเพื่อดึงรอบสั่งล่าสุด', 'warn');
+    document.getElementById('branchCode')?.focus();
+    return;
+  }
+
+  if (!lastOrderData) {
+    toast('ไม่พบประวัติการสั่งซื้อรอบล่าสุดสำหรับสาขานี้', 'info');
+    return;
+  }
+
+  const confirmHtml = `
+    <div style="font-weight: 700; color: #d97706; margin-bottom: 8px;">🔄 ยืนยันการสั่งซื้อซ้ำจากรอบล่าสุด?</div>
+    <p style="text-align: left; font-size: 14px; margin-bottom: 12px;">ระบบจะคัดลอกรายการและจำนวนจากใบสั่งซื้อรอบล่าสุดของคุณเข้ามาในตารางสั่งซื้อปัจจุบัน</p>
+    <div style="margin: 12px 0; padding: 12px; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 6px; font-size: 13px; color: #78350f; text-align: left; line-height: 1.5;">
+      <strong>ข้อมูลออเดอร์เดิมรอบล่าสุด:</strong><br>
+      • เลขที่เอกสาร: <b>${escapeHtml(lastOrderData.documentNo || '-')}</b><br>
+      • วันที่สั่งซื้อ: <b>${escapeHtml(lastOrderData.orderDate || '-')}</b><br>
+      • รายการทั้งหมด: <b>${lastOrderData.totalRows || lastOrderData.items?.length || 0} รายการ</b> (จำนวนรวม <b>${lastOrderData.totalQty || 0} ชิ้น</b>)
+    </div>
+    <p style="margin-top: 14px; font-size: 13px; color: #475569; text-align: left;">รายการอื่นที่คุณกรอกไว้ในตารางจะถูกรีเซ็ตและแทนที่ด้วยออเดอร์เดิมนี้ คุณต้องการดำเนินการต่อหรือไม่?</p>
+  `;
+
+  const confirmed = await showConfirmModal({
+    title: 'คัดลอกรอบสั่งล่าสุด',
+    htmlMessage: confirmHtml,
+    confirmText: 'คัดลอกออเดอร์เดิม',
+    cancelText: 'ยกเลิก'
+  });
+
+  if (!confirmed) return;
+
+  setLoading(true, 'กำลังคัดลอกรายการออเดอร์เดิม...');
+  try {
+    const lastItemMap = {};
+    if (lastOrderData.items) {
+      lastOrderData.items.forEach(item => {
+        const code = String(item.itemCode || '').trim().toLowerCase();
+        if (code) {
+          lastItemMap[code] = {
+            qty: item.qty || '',
+            note: item.note || ''
+          };
+        }
+      });
+    }
+
+    const trs = document.querySelectorAll('#itemBody tr');
+    let filledCount = 0;
+    let filledQty = 0;
+
+    trs.forEach(tr => {
+      if (tr.id === 'itemTableNoResult') return;
+      const codeEl = tr.querySelector('.item-code');
+      const qtyEl = tr.querySelector('.item-qty');
+      const noteEl = tr.querySelector('.item-note');
+
+      if (!codeEl || !qtyEl) return;
+      const code = String(codeEl.value || '').trim().toLowerCase();
+
+      if (lastItemMap[code]) {
+        const match = lastItemMap[code];
+        qtyEl.value = match.qty;
+        if (noteEl) noteEl.value = match.note || '';
+        filledCount++;
+        filledQty += Number(match.qty || 0);
+      } else {
+        qtyEl.value = '';
+        if (noteEl) noteEl.value = '';
+      }
+    });
+
+    setLoading(false);
+    updateItemSummary();
+    filterItemTable();
+    toast(`คัดลอกออเดอร์เดิมเรียบร้อย! ${filledCount} รายการ (รวม ${filledQty} ชิ้น)`, 'success');
+
+    setTimeout(() => {
+      toggleCartDrawer(true);
+    }, 400);
+
+  } catch (err) {
+    setLoading(false);
+    toast(`คัดลอกล้มเหลว: ${err.message || err}`, 'error');
+  }
+}
+
+/* =========================================================
+   Shopping Cart (ตะกร้าสินค้า) Logic
+   ========================================================= */
+
+function toggleCartDrawer(show) {
+  const drawer = document.getElementById('cartDrawer');
+  if (!drawer) return;
+
+  const isVisible = drawer.classList.contains('active');
+  const shouldShow = show !== undefined ? !!show : !isVisible;
+
+  if (shouldShow) {
+    renderCartDrawer();
+    drawer.classList.add('active');
+    drawer.setAttribute('aria-hidden', 'false');
+  } else {
+    drawer.classList.remove('active');
+    drawer.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function renderCartDrawer() {
+  const cartBody = document.getElementById('cartDrawerBody');
+  if (!cartBody) return;
+
+  const allTrs = getItemRows();
+  const activeRows = [];
+  
+  allTrs.forEach(tr => {
+    const qtyEl = tr.querySelector('.item-qty');
+    if (qtyEl && parseQty(qtyEl.value) > 0) {
+      activeRows.push({ tr, rowId: ensureItemRowId(tr) });
+    }
+  });
+
+  if (activeRows.length === 0) {
+    cartBody.innerHTML = `
+      <div class="cart-empty-state">
+        <div class="cart-empty-icon" style="font-size: 52px; margin-bottom: 16px;">🛒</div>
+        <h4 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 800; color: var(--text);">ยังไม่มีสินค้าในตะกร้า</h4>
+        <p style="margin: 0; font-size: 13px; color: var(--muted);">กรุณากรอกจำนวนสินค้าในตารางเพื่อเลือกสั่งซื้อ</p>
+      </div>
+    `;
+    setText('cartTotalItems', '0 รายการ');
+    setText('cartTotalQty', '0 ชิ้น');
+    return;
+  }
+
+  let html = '';
+  let totalItems = 0;
+  let totalQty = 0;
+
+  activeRows.forEach(({ tr, rowId }) => {
+    const codeEl = tr.querySelector('.item-code');
+    const nameEl = tr.querySelector('.item-name');
+    const sizeEl = tr.querySelector('.item-size');
+    const uomEl = tr.querySelector('.item-uom');
+    const qtyEl = tr.querySelector('.item-qty');
+    const noteEl = tr.querySelector('.item-note');
+
+    const code = codeEl ? codeEl.value : '';
+    const name = nameEl ? nameEl.value : '';
+    const size = sizeEl ? sizeEl.value : '';
+    const uom = uomEl ? uomEl.value : '';
+    const qty = qtyEl ? parseQty(qtyEl.value) : 0;
+    const note = noteEl ? noteEl.value : '';
+
+    totalItems++;
+    totalQty += qty;
+
+    html += `
+      <div class="cart-item" data-row-id="${rowId}">
+        <div class="cart-item-info">
+          <div class="cart-item-header">
+            <span class="cart-item-code">${escapeHtml(code || 'CUSTOM')}</span>
+            <button class="cart-item-remove" onclick="removeCartItem('${rowId}')" title="ลบรายการ">×</button>
+          </div>
+          <div class="cart-item-name">${escapeHtml(name || 'ไม่มีชื่อสินค้า')}</div>
+          <div class="cart-item-meta">
+            ${size ? `<span class="meta-pill">${escapeHtml(size)}</span>` : ''}
+            ${uom ? `<span class="meta-pill">${escapeHtml(uom)}</span>` : ''}
+          </div>
+        </div>
+        <div class="cart-item-controls">
+          <div class="qty-stepper">
+            <button type="button" class="stepper-btn minus" onclick="adjustCartQty('${rowId}', -1)">-</button>
+            <input type="number" class="stepper-input" value="${qty}" onchange="updateCartQty('${rowId}', this.value)" min="1" step="1">
+            <button type="button" class="stepper-btn plus" onclick="adjustCartQty('${rowId}', 1)">+</button>
+          </div>
+          <div class="cart-item-note-wrap">
+            <input type="text" class="cart-item-note-input" placeholder="ใส่หมายเหตุ..." value="${escapeAttr(note)}" onchange="updateCartNote('${rowId}', this.value)">
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  cartBody.innerHTML = html;
+  setText('cartTotalItems', `${totalItems} รายการ`);
+  setText('cartTotalQty', `${totalQty.toLocaleString('th-TH')} ชิ้น`);
+}
+
+function adjustCartQty(rowId, delta) {
+  const tr = getItemRowById(rowId);
+  if (!tr) return;
+  const qtyEl = tr.querySelector('.item-qty');
+  if (!qtyEl) return;
+
+  let currentVal = parseQty(qtyEl.value);
+  let newVal = currentVal + delta;
+  if (newVal < 1) newVal = '';
+
+  qtyEl.value = newVal;
+  updateItemSummary();
+  filterItemTable();
+}
+
+function updateCartQty(rowId, value) {
+  const tr = getItemRowById(rowId);
+  if (!tr) return;
+  const qtyEl = tr.querySelector('.item-qty');
+  if (!qtyEl) return;
+
+  let newVal = parseQty(value);
+  if (newVal < 1 || isNaN(newVal)) newVal = '';
+
+  qtyEl.value = newVal;
+  updateItemSummary();
+  filterItemTable();
+}
+
+function updateCartNote(rowId, value) {
+  const tr = getItemRowById(rowId);
+  if (!tr) return;
+  const noteEl = tr.querySelector('.item-note');
+  if (!noteEl) return;
+
+  noteEl.value = value || '';
+  updateItemSummary();
+}
+
+function removeCartItem(rowId) {
+  const tr = getItemRowById(rowId);
+  if (!tr) return;
+  const qtyEl = tr.querySelector('.item-qty');
+  if (qtyEl) qtyEl.value = '';
+
+  updateItemSummary();
+  filterItemTable();
+}
+
+function submitOrderFromCart() {
+  toggleCartDrawer(false);
+  submitOrder();
+}
+
+// Global keypress listener to close cart drawer on Escape
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    const drawer = document.getElementById('cartDrawer');
+    if (drawer && drawer.classList.contains('active')) {
+      toggleCartDrawer(false);
+    }
+  }
+});
+
+/* =========================================================
+   Online Shopping Additions: Steppers, Filters, Clear Cart
+   ========================================================= */
+
+function toggleShowCartOnly() {
+  showCartOnly = !showCartOnly;
+  const btn = document.getElementById('showCartOnlyBtn');
+  if (btn) {
+    btn.classList.toggle('active', showCartOnly);
+  }
+  filterItemTable();
+}
+
+function adjustTableRowQty(btn, delta) {
+  const stepper = btn.closest('.qty-stepper');
+  const input = stepper ? stepper.querySelector('.item-qty') : null;
+  if (!input) return;
+
+  let currentVal = parseQty(input.value);
+  let newVal = currentVal + delta;
+  if (newVal < 1) newVal = '';
+
+  input.value = newVal;
+  updateItemSummary();
+  filterItemTable();
+}
+
+async function clearAllCart() {
+  const activeRows = getSelectedItemRows();
+  if (activeRows.length === 0) return;
+
+  const ok = await showConfirmModal({
+    title: 'ยืนยันการล้างตะกร้าสินค้า',
+    htmlMessage: `<p>คุณต้องการ<b>ล้างจำนวนสินค้าทั้งหมด</b>ในตะกร้าใช่หรือไม่? (ข้อมูลจำนวนสั่งซื้อของทุกรายการในแบบฟอร์มจะถูกเคลียร์เป็นค่าว่าง)</p>`,
+    confirmText: 'ล้างตะกร้าทั้งหมด',
+    cancelText: 'ยกเลิก'
+  });
+  if (!ok) return;
+
+  activeRows.forEach(tr => {
+    const qtyEl = tr.querySelector('.item-qty');
+    if (qtyEl) qtyEl.value = '';
+  });
+
+  updateItemSummary();
+  filterItemTable();
+  toast('ล้างตะกร้าสินค้าทั้งหมดแล้ว', 'info');
 }
