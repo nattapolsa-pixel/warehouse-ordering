@@ -17,7 +17,7 @@ let CONFIG = {
       label: 'Punthai',
       menuLabel: 'สั่งสินค้า Punthai',
       compCode: '1021',
-      cutoffTime: '11:00',
+      cutoffTime: '16:00',
       orderSheet: 'สาขาสั่งสินค้า_Pun',
       masterItemSheet: 'Master_Item_Pun'
     },
@@ -26,7 +26,7 @@ let CONFIG = {
       label: 'Coffee World',
       menuLabel: 'สั่งสินค้า Coffee World',
       compCode: '1025',
-      cutoffTime: '11:00',
+      cutoffTime: '16:00',
       orderSheet: 'สาขาสั่งสินค้า_GFA',
       masterItemSheet: 'Master_Item_GFA'
     }
@@ -2440,6 +2440,7 @@ async function submitOrder() {
   });
 
   try {
+    let isLateSubmit = false;
     try {
       await preloadFastLookupData(currentOwnerKey, true);
     } catch (err) {}
@@ -2623,14 +2624,29 @@ async function submitOrder() {
     }
 
     const ownerConfig = OWNERS[currentOwnerKey] || OWNERS['PUN'];
-    const cutoffStr = ownerConfig.cutoffTime || '11:00';
+    const cutoffStr = ownerConfig.cutoffTime || '16:00';
     const [cutH, cutM] = cutoffStr.split(':').map(Number);
     const now = new Date();
     
     // 7. ปรับปรุง Cut-off Time Check: เช็คเฉพาะกรณีกดสั่งวันปัจจุบันเท่านั้น
     if (orderDate === todayIso()) {
       if (now.getHours() > cutH || (now.getHours() === cutH && now.getMinutes() > cutM)) {
-        return toast(`ไม่สามารถส่งคำสั่งซื้อได้ เนื่องจากเลยเวลา Cut-off (${cutoffStr} น.) ของวันนี้ไปแล้ว`, 'error');
+        const confirmHtml = `
+          <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px; font-size: 16px;">⚠️ เลยเวลา Cut-off (${cutoffStr} น.) ของวันนี้แล้ว!</div>
+          <p style="margin: 4px 0; font-size: 14.5px; color: #334155; text-align: left;">คุณกำลังส่งใบสั่งซื้อสินค้าเลยกำหนดเวลาปิดรอบส่งของวันนี้</p>
+          <div style="margin-top: 14px; padding: 12px; background: #fef2f2; border-left: 4px solid #ef4444; border-radius: 6px; font-size: 13.5px; color: #991b1b; line-height: 1.5; text-align: left;">
+            <strong>คำชี้แจง:</strong> การสั่งซื้อสินค้าล่าช้าหลังเวลา Cut-off อาจจัดส่งไม่ทันรอบปกติ หรือจัดส่งล่าช้ากว่าที่กำหนด
+          </div>
+          <p style="margin-top: 16px; font-weight: 700; color: #334155; text-align: left;">คุณยืนยันว่าต้องการส่งคำสั่งซื้อล่าช้าจริงๆ ใช่หรือไม่?</p>
+        `;
+        const ok = await showConfirmModal({
+          title: 'ยืนยันสั่งสินค้าเลยเวลา Cut-off',
+          htmlMessage: confirmHtml,
+          confirmText: 'ยืนยันส่งใบสั่งซื้อล่าช้า',
+          cancelText: 'ยกเลิก'
+        });
+        if (!ok) return;
+        isLateSubmit = true;
       }
     }
 
@@ -2717,6 +2733,7 @@ async function submitOrder() {
       branchCode,
       branchEmail,
       branchZone,
+      ignoreCutoff: isLateSubmit,
       items
     });
 
@@ -3422,7 +3439,7 @@ function startRealtimeClock() {
     
     // Get current owner's cutoff time
     const owner = OWNERS[currentOwnerKey] || OWNERS['PUN'];
-    const cutoffStr = owner.cutoffTime || '11:00';
+    const cutoffStr = owner.cutoffTime || '16:00';
     const [cutH, cutM] = cutoffStr.split(':').map(Number);
     
     const cutoffTime = new Date();

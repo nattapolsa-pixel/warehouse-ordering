@@ -34,7 +34,7 @@ const APP_CONFIG = {
       label: 'Punthai',
       menuLabel: 'สั่งสินค้า Punthai',
       compCode: '1021',
-      cutoffTime: '13:00',
+      cutoffTime: '16:00',
       orderSheet: 'สาขาสั่งสินค้า_Pun',
       masterItemSheet: 'Master_Item_Pun'
     },
@@ -43,7 +43,7 @@ const APP_CONFIG = {
       label: 'Coffee World',
       menuLabel: 'สั่งสินค้า Coffee World',
       compCode: '1025',
-      cutoffTime: '12:00',
+      cutoffTime: '16:00',
       orderSheet: 'สาขาสั่งสินค้า_GFA',
       masterItemSheet: 'Master_Item_GFA'
     }
@@ -277,12 +277,14 @@ function apiSubmitOrder(payload) {
       throw new Error('ขออภัย สามารถสั่งซื้อสินค้าล่วงหน้าได้ไม่เกิน 14 วัน');
     }
     
-    const cutoffStr = owner.cutoffTime || '11:00';
+    const cutoffStr = owner.cutoffTime || '16:00';
     const [cutH, cutM] = cutoffStr.split(':').map(Number);
     const currentH = now.getHours();
     const currentM = now.getMinutes();
     if (orderDayOnly.getTime() === todayOnly.getTime() && (currentH > cutH || (currentH === cutH && currentM > cutM))) {
-      throw new Error('ไม่สามารถบันทึกคำสั่งซื้อได้ เนื่องจากเลยเวลา Cut-off (' + cutoffStr + ' น.) ของวันนี้ไปแล้ว');
+      if (!payload.ignoreCutoff) {
+        throw new Error('ไม่สามารถบันทึกคำสั่งซื้อได้ เนื่องจากเลยเวลา Cut-off (' + cutoffStr + ' น.) ของวันนี้ไปแล้ว');
+      }
     }
 
     const orderDateWithSubmitTime = mergeDateWithTime_(orderDateOnly, now);
@@ -2346,6 +2348,7 @@ function normalizeOrderPayloadForApi_(payload) {
     branchCode: payload.branchCode || payload.branch || '',
     branchEmail: payload.branchEmail || payload.email || '',
     branchZone: payload.branchZone || payload.province || payload.zone || '',
+    ignoreCutoff: payload.ignoreCutoff === true || payload.ignoreCutoff === 'true',
     items: items
   };
 }
