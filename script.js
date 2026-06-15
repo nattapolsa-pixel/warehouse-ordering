@@ -310,11 +310,13 @@ function armConfirmModal() {
   });
 }
 
-function showConfirmModal({ title, htmlMessage }) {
+function showConfirmModal({ title, htmlMessage, confirmText, cancelText }) {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirmModal');
     const titleEl = document.getElementById('confirmModalTitle');
     const msgEl = document.getElementById('confirmModalMessage');
+    const confirmBtn = document.getElementById('confirmModalBtn');
+    const cancelBtn = document.getElementById('confirmModalCancelBtn');
     
     if (!modal || !titleEl || !msgEl) {
       resolve(confirm(htmlMessage.replace(/<[^>]*>/g, '')));
@@ -323,6 +325,25 @@ function showConfirmModal({ title, htmlMessage }) {
     
     titleEl.textContent = title || 'ยืนยันการดำเนินการ';
     msgEl.innerHTML = htmlMessage;
+    
+    if (confirmBtn) {
+      confirmBtn.textContent = confirmText || 'ยืนยัน';
+    }
+    
+    if (cancelBtn) {
+      if (cancelText === '') {
+        cancelBtn.style.display = 'none';
+        if (confirmBtn) {
+          confirmBtn.style.gridColumn = 'span 2';
+        }
+      } else {
+        cancelBtn.style.display = 'block';
+        cancelBtn.textContent = cancelText || 'ยกเลิก';
+        if (confirmBtn) {
+          confirmBtn.style.gridColumn = '';
+        }
+      }
+    }
     
     confirmModalResolver = resolve;
     
@@ -2297,165 +2318,285 @@ function setAnimatedText(id, value) {
 async function submitOrder() {
   if (isSubmittingOrder) return;
   isSubmittingOrder = true;
+
+  const submitBtn = document.querySelector('button[onclick="submitOrder()"]');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'กำลังบันทึกคำสั่งสินค้า...';
+  }
+
   try {
     try {
       await preloadFastLookupData(currentOwnerKey, true);
     } catch (err) {}
 
-  resolvePendingItemInputs();
-  const unresolvedRow = findUnresolvedSearchRow();
-  if (unresolvedRow) {
-    toast('มีรายการที่ค้นเจอหลายตัวเลือก กรุณาเลือกรหัสสินค้าจากรายการแนะนำก่อนบันทึก', 'warn');
-    const input = unresolvedRow.querySelector('.item-code');
-    input.focus();
-    showItemSuggestions(unresolvedRow, input.value);
-    return;
-  }
+    resolvePendingItemInputs();
+    const unresolvedRow = findUnresolvedSearchRow();
+    if (unresolvedRow) {
+      toast('มีรายการที่ค้นเจอหลายตัวเลือก กรุณาเลือกรหัสสินค้าจากรายการแนะนำก่อนบันทึก', 'warn');
+      const input = unresolvedRow.querySelector('.item-code');
+      input.focus();
+      showItemSuggestions(unresolvedRow, input.value);
+      return;
+    }
 
-  const orderDate = getValue('orderDate');
-  const branchCode = getValue('branchCode').trim();
-  const branchEmail = getValue('branchEmail').trim();
-  const branchZone = getValue('branchZone').trim();
-  const items = collectItems();
-  const duplicateCodes = getDuplicateItemCodes();
-  const branch = getExactBranchMatch(branchCode);
+    const orderDate = getValue('orderDate');
+    const branchCode = getValue('branchCode').trim();
+    const branchEmail = getValue('branchEmail').trim();
+    const branchZone = getValue('branchZone').trim();
+    const items = collectItems();
+    const duplicateCodes = getDuplicateItemCodes();
+    const branch = getExactBranchMatch(branchCode);
 
-  if (!orderDate) return toast('กรุณาเลือกวันที่สั่ง', 'warn');
-  if (!branchCode) return toast('กรุณาระบุรหัสสาขา', 'warn');
-  if (!branch) {
-    document.getElementById('branchCode')?.focus();
-    showBranchSuggestions(branchCode);
-    return toast('กรุณาเลือกสาขาจากรายการแนะนำก่อนบันทึก', 'warn');
-  }
+    if (!orderDate) return toast('กรุณาเลือกวันที่สั่ง', 'warn');
+    if (!branchCode) return toast('กรุณาระบุรหัสสาขา', 'warn');
+    if (!branch) {
+      document.getElementById('branchCode')?.focus();
+      showBranchSuggestions(branchCode);
+      return toast('กรุณาเลือกสาขาจากรายการแนะนำก่อนบันทึก', 'warn');
+    }
 
-  // ตรวจสอบสินค้าที่ป้อนจำนวนไม่ถูกต้อง (เช่น เป็นตัวหนังสือ หรือเป็น 0 หรือติดลบ)
-  const trs = [...document.querySelectorAll('#itemBody tr')];
-  const invalidQtyItems = [];
-  trs.forEach(tr => {
-    const qtyEl = tr.querySelector('.item-qty');
-    const codeEl = tr.querySelector('.item-code');
-    const nameEl = tr.querySelector('.item-name');
-    if (qtyEl && codeEl && codeEl.value.trim()) {
-      const rawVal = qtyEl.value.trim();
-      if (rawVal) {
-        if (!isNumericLike(rawVal) || parseQty(rawVal) <= 0) {
-          invalidQtyItems.push({
-            code: codeEl.value.trim(),
-            name: nameEl ? nameEl.value.trim() : '',
-            raw: rawVal
-          });
+    // 1. บล็อกสั่งย้อนหลัง (Past Date Hard Block)
+    if (orderDate < todayIso()) {
+      return toast(`ไม่สามารถเลือกวันย้อนหลังได้ กรุณาเลือกวันที่สั่งซื้อตั้งแต่วันนี้ (${todayIso()}) เป็นต้นไป`, 'error');
+    }
+
+    // 2. จำกัดการสั่งล่วงหน้าไม่เกิน 14 วัน (Future Date Limit)
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() + 14);
+    const maxDateIso = maxDate.toISOString().split('T')[0];
+    if (orderDate > maxDateIso) {
+      return toast(`ขออภัย สามารถสั่งซื้อสินค้าล่วงหน้าได้ไม่เกิน 14 วัน (ไม่เกินวันที่ ${maxDateIso})`, 'warn');
+    }
+
+    // 3. ตรวจสอบรูปแบบอีเมล (Email format check)
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (branchEmail && !emailRegex.test(branchEmail)) {
+      document.getElementById('branchEmail')?.focus();
+      return toast('รูปแบบอีเมลไม่ถูกต้อง กรุณาตรวจสอบและแก้ไขให้ถูกต้อง', 'warn');
+    }
+
+    // ตรวจสอบสินค้าที่ป้อนจำนวนไม่ถูกต้อง (เช่น เป็นตัวหนังสือ หรือเป็น 0 หรือติดลบ)
+    const trs = [...document.querySelectorAll('#itemBody tr')];
+    const invalidQtyItems = [];
+    trs.forEach(tr => {
+      const qtyEl = tr.querySelector('.item-qty');
+      const codeEl = tr.querySelector('.item-code');
+      const nameEl = tr.querySelector('.item-name');
+      if (qtyEl && codeEl && codeEl.value.trim()) {
+        const rawVal = qtyEl.value.trim();
+        if (rawVal) {
+          if (!isNumericLike(rawVal) || parseQty(rawVal) <= 0) {
+            invalidQtyItems.push({
+              code: codeEl.value.trim(),
+              name: nameEl ? nameEl.value.trim() : '',
+              raw: rawVal
+            });
+          }
         }
       }
-    }
-  });
+    });
 
-  if (invalidQtyItems.length > 0) {
-    const listHtml = invalidQtyItems.map(x => `
-      <li style="margin-bottom: 6px;">
-        <span style="font-weight:700; color: #dc2626;">[${escapeHtml(x.code)}]</span> 
-        ${escapeHtml(x.name)} 
-        <span style="color: #64748b;">(ระบุจำนวน: "${escapeHtml(x.raw)}")</span>
-      </li>
-    `).join('');
-    const confirmHtml = `
-      <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">⚠️ พบสินค้าบางรายการระบุจำนวนสั่งซื้อไม่ถูกต้อง:</div>
-      <ul style="padding-left: 20px; margin: 10px 0; max-height: 120px; overflow-y: auto; text-align: left;">
-        ${listHtml}
-      </ul>
-      <p style="margin-top: 10px; color: #475569;">รายการเหล่านี้จะ<b>ไม่ถูกส่งสั่งซื้อ</b>เนื่องจากจำนวนไม่ถูกต้อง คุณต้องการดำเนินการส่งคำสั่งซื้อต่อโดยข้ามรายการเหล่านี้ใช่หรือไม่?</p>
-    `;
-    const ok = await showConfirmModal({ title: 'พบจำนวนสินค้าไม่ถูกต้อง', htmlMessage: confirmHtml });
-    if (!ok) return;
-  }
-
-  if (!items.length) return toast('กรุณาเลือกรายการสินค้าอย่างน้อย 1 รายการเพื่อสั่งซื้อ', 'warn');
-  if (duplicateCodes.length) return toast('มีรหัสสินค้าซ้ำ กรุณากดรวมรายการซ้ำหรือแก้ไขก่อนบันทึก', 'warn');
-
-  const ownerConfig = OWNERS[currentOwnerKey] || OWNERS['PUN'];
-  const cutoffStr = ownerConfig.cutoffTime || '11:00';
-  const [cutH, cutM] = cutoffStr.split(':').map(Number);
-  const now = new Date();
-  
-  if (now.getHours() > cutH || (now.getHours() === cutH && now.getMinutes() > cutM)) {
-    return toast(`ไม่สามารถส่งคำสั่งซื้อได้ เนื่องจากเลยเวลา Cut-off (${cutoffStr} น.) ของวันนี้ไปแล้ว`, 'error');
-  }
-
-  // 1. ตรวจสอบสั่งไม่ตรงรอบตัวเอง
-  const cycle = checkOrderCycleClient(orderDate, branch.cycleText || '');
-  if (cycle.status !== 'รอบสั่งสาขา') {
-    const cycleDesc = branch.cycleText || 'ไม่ได้กำหนดรอบในระบบ';
-    const confirmHtml = `
-      <div style="font-weight: 700; color: #d97706; margin-bottom: 8px; font-size: 16px;">⚠️ วันที่สั่งซื้อไม่ใช่รอบส่งปกติของสาขาคุณ!</div>
-      <p style="margin: 4px 0;">รอบสั่งตาม Master: <b style="color: var(--owner, #78350f);">${escapeHtml(cycleDesc)}</b></p>
-      <p style="margin: 4px 0;">วันที่คุณเลือกสั่ง: <b>${orderDate} (วัน${cycle.dayThai})</b></p>
-      <div style="margin-top: 14px; padding: 12px; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 6px; font-size: 13.5px; color: #78350f; line-height: 1.5; text-align: left;">
-        <strong>คำชี้แจง:</strong> หากยืนยันส่งสินค้าไม่ตรงรอบ ใบสั่งซื้อนี้จะเข้าระบบเพื่อรอประมวลผลจัดส่งในรอบปกติครั้งถัดไปของสาขาคุณ
-      </div>
-      <p style="margin-top: 16px; font-weight: 700; color: #334155; text-align: left;">คุณยืนยันที่จะสั่งสินค้าไม่ตรงรอบใช่หรือไม่?</p>
-    `;
-    const ok = await showConfirmModal({ title: 'ยืนยันสั่งสินค้าไม่ตรงรอบส่ง', htmlMessage: confirmHtml });
-    if (!ok) return;
-  }
-
-  // 2. ตรวจสอบยอดสั่งซื้อที่สูงเกินกำหนด (Over)
-  const overItems = items.filter(x => x.qty >= QTY_OVER_THRESHOLD);
-  if (overItems.length > 0) {
-    const listHtml = overItems.map(x => {
-      const match = trs.find(tr => {
-        const codeInput = tr.querySelector('.item-code');
-        return (codeInput.value || codeInput.textContent || '').trim().toLowerCase() === x.itemCode.toLowerCase();
-      });
-      const itemName = match ? match.querySelector('.item-name').value.trim() : '';
-      return `
+    if (invalidQtyItems.length > 0) {
+      const listHtml = invalidQtyItems.map(x => `
         <li style="margin-bottom: 6px;">
-          <span style="font-weight:700;">[${escapeHtml(x.itemCode)}]</span> 
-          ${escapeHtml(itemName)}: 
-          <b style="color: #dc2626; font-size: 15px;">${x.qty}</b> ชิ้น
+          <span style="font-weight:700; color: #dc2626;">[${escapeHtml(x.code)}]</span> 
+          ${escapeHtml(x.name)} 
+          <span style="color: #64748b;">(ระบุจำนวน: "${escapeHtml(x.raw)}")</span>
         </li>
+      `).join('');
+      const confirmHtml = `
+        <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">⚠️ พบสินค้าบางรายการระบุจำนวนสั่งซื้อไม่ถูกต้อง:</div>
+        <ul style="padding-left: 20px; margin: 10px 0; max-height: 120px; overflow-y: auto; text-align: left;">
+          ${listHtml}
+        </ul>
+        <p style="margin-top: 10px; color: #475569;">รายการเหล่านี้จะ<b>ไม่ถูกส่งสั่งซื้อ</b>เนื่องจากจำนวนไม่ถูกต้อง คุณต้องการดำเนินการส่งคำสั่งซื้อต่อโดยข้ามรายการเหล่านี้ใช่หรือไม่?</p>
       `;
-    }).join('');
+      const ok = await showConfirmModal({ title: 'พบจำนวนสินค้าไม่ถูกต้อง', htmlMessage: confirmHtml });
+      if (!ok) return;
+    }
+
+    if (!items.length) return toast('กรุณาเลือกรายการสินค้าอย่างน้อย 1 รายการเพื่อสั่งซื้อ', 'warn');
+
+    // 4. บล็อกจำนวนสินค้าที่สูงผิดปกติ (Barcode Misentry Block)
+    const extremeQtyItems = items.filter(x => x.qty >= 5000);
+    if (extremeQtyItems.length > 0) {
+      const listHtml = extremeQtyItems.map(x => {
+        const match = trs.find(tr => {
+          const codeInput = tr.querySelector('.item-code');
+          return (codeInput.value || codeInput.textContent || '').trim().toLowerCase() === x.itemCode.toLowerCase();
+        });
+        const itemName = match ? match.querySelector('.item-name').value.trim() : '';
+        return `<li><b>[${escapeHtml(x.itemCode)}]</b> ${escapeHtml(itemName)}: <span style="color: #dc2626; font-weight: 700;">${x.qty.toLocaleString()}</span> ชิ้น</li>`;
+      }).join('');
+      const errorHtml = `
+        <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">🚫 ตรวจพบจำนวนสั่งซื้อสูงเกินเกณฑ์จำกัดสูงสุด (5,000 ชิ้น):</div>
+        <ul style="padding-left: 20px; margin: 10px 0; text-align: left;">
+          ${listHtml}
+        </ul>
+        <p style="margin-top: 10px; color: #475569;">จำนวนสินค้าดังกล่าวสูงผิดปกติ อาจเกิดจากการกรอกรหัสบาร์โค้ดผิดช่อง กรุณาตรวจสอบและแก้ไขให้ถูกต้อง</p>
+      `;
+      await showConfirmModal({ title: 'บล็อกจำนวนสินค้าเกินกำหนด', htmlMessage: errorHtml, confirmText: 'ตกลง', cancelText: '' });
+      return;
+    }
+
+    // 5. รวมรายการรหัสสินค้าซ้ำซ้อนแบบอัตโนมัติ (Auto-Merge)
+    if (duplicateCodes.length) {
+      const confirmHtml = `
+        <div style="font-weight: 700; color: #d97706; margin-bottom: 8px;">⚠️ ตรวจพบรหัสสินค้าซ้ำกันในรายการสั่งซื้อ:</div>
+        <p style="text-align: left;">ระบบพบสินค้าประเภทเดียวกันถูกกรอกไว้มากกว่าหนึ่งบรรทัด คุณต้องการให้ระบบดำเนินการรวมจำนวน (Merge) รายการซ้ำให้โดยอัตโนมัติเลยหรือไม่?</p>
+      `;
+      const ok = await showConfirmModal({
+        title: 'พบรายการสินค้าซ้ำกัน',
+        htmlMessage: confirmHtml,
+        confirmText: 'รวมรายการอัตโนมัติ',
+        cancelText: 'กลับไปแก้ไขเอง'
+      });
+      if (ok) {
+        mergeDuplicateItems();
+        return; // Return so user can review the merged quantities and click Save again
+      } else {
+        return;
+      }
+    }
+
+    // 6. ตรวจจับการสั่งออเดอร์ซ้ำซ้อนในวันเดียวกัน (Duplicate Order Protection)
+    const isCreateMode = !getValue('documentNo');
+    if (isCreateMode) {
+      try {
+        setLoading(true, 'กำลังตรวจสอบประวัติสั่งซื้อเพื่อป้องกันการสั่งซ้ำ...');
+        const res = await apiRequest('myOrders', { ownerKey: currentOwnerKey, branchCode, limit: 120 });
+        setLoading(false);
+        if (res && res.orders) {
+          const existingOrder = res.orders.find(o => parseDateThToIso(o.orderDate) === orderDate);
+          if (existingOrder) {
+            const confirmHtml = `
+              <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">⚠️ ตรวจพบใบสั่งซื้อซ้ำซ้อนในระบบ!</div>
+              <p style="text-align: left;">สาขาของคุณได้ส่งคำสั่งซื้อสำหรับรอบวันที่ <b>${orderDate}</b> ไปเรียบร้อยแล้ว</p>
+              <div style="margin: 12px 0; padding: 12px; background: #fef2f2; border-left: 4px solid #ef4444; border-radius: 6px; font-size: 13.5px; color: #991b1b; text-align: left; line-height: 1.5;">
+                <strong>ข้อมูลออเดอร์เดิมในระบบ:</strong><br>
+                • เลขที่เอกสาร: <b>${escapeHtml(existingOrder.documentNo)}</b><br>
+                • วันที่บันทึก: <b>${escapeHtml(existingOrder.submittedAt)}</b><br>
+                • รายการทั้งหมด: <b>${existingOrder.totalRows || existingOrder.items?.length || 0} รายการ</b> (จำนวนรวม <b>${existingOrder.totalQty} ชิ้น</b>)
+              </div>
+              <p style="margin-top: 14px; color: #475569; text-align: left;">เพื่อป้องกันการส่งออเดอร์ซ้ำซ้อน ระบบไม่ยอมให้สร้างใบสั่งซื้อใหม่ในวันที่นี้อีก หากต้องการปรับปรุงรายการสั่ง กรุณาทำการ <b>"แก้ไข"</b> ออเดอร์เดิมจากหน้าประวัติ</p>
+            `;
+            await showConfirmModal({
+              title: 'ส่งคำสั่งซื้อซ้ำซ้อน',
+              htmlMessage: confirmHtml,
+              confirmText: 'ไปดูรายการสั่งซื้อเดิม',
+              cancelText: ''
+            });
+            
+            // Switch tab
+            openSection('trackOrder');
+            const trackInput = document.getElementById('trackBranchCode');
+            if (trackInput) {
+              trackInput.value = branchCode;
+              const exactBranch = getExactBranchMatch(branchCode);
+              if (exactBranch) {
+                chooseTrackBranchSuggestion(exactBranch);
+              } else {
+                loadMyOrders({ quiet: true });
+              }
+            }
+            return;
+          }
+        }
+      } catch (err) {
+        setLoading(false); // Fallback and allow if API fails
+      }
+    }
+
+    const ownerConfig = OWNERS[currentOwnerKey] || OWNERS['PUN'];
+    const cutoffStr = ownerConfig.cutoffTime || '11:00';
+    const [cutH, cutM] = cutoffStr.split(':').map(Number);
+    const now = new Date();
     
-    const confirmHtml = `
-      <div style="font-weight: 700; color: #b45309; margin-bottom: 8px;">⚠️ พบรายการสินค้าที่มีจำนวนสั่งซื้อสูงผิดปกติ (ตั้งแต่ ${QTY_OVER_THRESHOLD} ชิ้นขึ้นไป):</div>
-      <ul style="padding-left: 20px; margin: 10px 0; max-height: 150px; overflow-y: auto; text-align: left;">
-        ${listHtml}
-      </ul>
-      <p style="margin-top: 14px; font-weight: 700; color: #334155; text-align: left;">คุณยืนยันที่จะสั่งซื้อรายการดังกล่าวจริงตามยอดนี้หรือไม่?</p>
-    `;
-    const ok = await showConfirmModal({ title: 'ยืนยันยอดสั่งซื้อสูงผิดปกติ', htmlMessage: confirmHtml });
-    if (!ok) return;
-  }
+    // 7. ปรับปรุง Cut-off Time Check: เช็คเฉพาะกรณีกดสั่งวันปัจจุบันเท่านั้น
+    if (orderDate === todayIso()) {
+      if (now.getHours() > cutH || (now.getHours() === cutH && now.getMinutes() > cutM)) {
+        return toast(`ไม่สามารถส่งคำสั่งซื้อได้ เนื่องจากเลยเวลา Cut-off (${cutoffStr} น.) ของวันนี้ไปแล้ว`, 'error');
+      }
+    }
 
-  // 3. แจ้งเตือนส่งคำสั่งซื้อใกล้เวลา Cut-off (เหลือเวลาน้อยกว่า 15 นาที)
-  const cutoffDiffMin = ((cutH * 60 + cutM) - (now.getHours() * 60 + now.getMinutes()));
-  if (cutoffDiffMin > 0 && cutoffDiffMin <= 15) {
-    const confirmHtml = `
-      <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">⏰ คำสั่งซื้อใกล้หมดเวลาส่งของวันนี้แล้ว!</div>
-      <p style="text-align: left;">ขณะนี้เหลือเวลาอีกเพียง <b style="color: #dc2626; font-size: 18px;">${cutoffDiffMin}</b> นาที ก่อนปิดรับยอดออเดอร์ของวันนี้ (Cut-off เวลา <b>${cutoffStr} น.</b>)</p>
-      <p style="margin-top: 12px; color: #475569; text-align: left;">หากระบบบันทึกช้ากว่าเวลา Cut-off ออเดอร์นี้จะไม่ได้รับจัดส่งในรอบวันนี้ ยืนยันที่จะส่งโดยเร็วที่สุดใช่หรือไม่?</p>
-    `;
-    const ok = await showConfirmModal({ title: 'เตือนการส่งคำสั่งซื้อใกล้ปิดรอบ', htmlMessage: confirmHtml });
-    if (!ok) return;
-  }
+    // 8. ตรวจสอบสั่งไม่ตรงรอบตัวเอง
+    const cycle = checkOrderCycleClient(orderDate, branch.cycleText || '');
+    if (cycle.status !== 'รอบสั่งสาขา') {
+      const cycleDesc = branch.cycleText || 'ไม่ได้กำหนดรอบในระบบ';
+      const confirmHtml = `
+        <div style="font-weight: 700; color: #d97706; margin-bottom: 8px; font-size: 16px;">⚠️ วันที่สั่งซื้อไม่ใช่รอบส่งปกติของสาขาคุณ!</div>
+        <p style="margin: 4px 0;">รอบสั่งตาม Master: <b style="color: var(--owner, #78350f);">${escapeHtml(cycleDesc)}</b></p>
+        <p style="margin: 4px 0;">วันที่คุณเลือกสั่ง: <b>${orderDate} (วัน${cycle.dayThai})</b></p>
+        <div style="margin-top: 14px; padding: 12px; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 6px; font-size: 13.5px; color: #78350f; line-height: 1.5; text-align: left;">
+          <strong>คำชี้แจง:</strong> หากยืนยันส่งสินค้าไม่ตรงรอบ ใบสั่งซื้อนี้จะเข้าระบบเพื่อรอประมวลผลจัดส่งในรอบปกติครั้งถัดไปของสาขาคุณ
+        </div>
+        <p style="margin-top: 16px; font-weight: 700; color: #334155; text-align: left;">คุณยืนยันที่จะสั่งสินค้าไม่ตรงรอบใช่หรือไม่?</p>
+      `;
+      const ok = await showConfirmModal({ title: 'ยืนยันสั่งสินค้าไม่ตรงรอบส่ง', htmlMessage: confirmHtml });
+      if (!ok) return;
+    }
 
-  // 4. ตรวจสอบยอดรวมทั้งหมด (Total Qty / Total Lines) ที่เยอะมากเพื่อป้องกันความผิดพลาด
-  const totalQty = items.reduce((sum, x) => sum + x.qty, 0);
-  const totalLines = items.length;
-  if (totalQty >= 1000 || totalLines >= 50) {
-    const confirmHtml = `
-      <div style="font-weight: 700; color: #1e3a8a; margin-bottom: 8px;">📦 ตรวจสอบขนาดคำสั่งซื้อขนาดใหญ่</div>
-      <p style="text-align: left;">รายการสินค้าสั่งซื้อทั้งหมด: <b style="color: var(--owner, #1f8f4d);">${totalLines} รายการ</b></p>
-      <p style="text-align: left;">จำนวนรวมทุกชิ้น (QTY): <b style="color: var(--owner, #1f8f4d);">${totalQty.toLocaleString()} ชิ้น</b></p>
-      <p style="margin-top: 12px; color: #475569; text-align: left;">ออเดอร์นี้มียอดสั่งรวมค่อนข้างสูง กรุณาตรวจสอบให้แน่ใจว่าไม่ได้ป้อนจำนวนผิดช่อง หรือสั่งเบิ้ลรายการเดิม</p>
-      <p style="margin-top: 16px; font-weight: 700; color: #334155; text-align: left;">ยืนยันว่ายอดสั่งซื้อทั้งหมดถูกต้องแล้วใช่หรือไม่?</p>
-    `;
-    const ok = await showConfirmModal({ title: 'ยืนยันขนาดคำสั่งซื้อ', htmlMessage: confirmHtml });
-    if (!ok) return;
-  }
+    // 9. ตรวจสอบยอดสั่งซื้อที่สูงเกินกำหนด (Over)
+    const overItems = items.filter(x => x.qty >= QTY_OVER_THRESHOLD);
+    if (overItems.length > 0) {
+      const listHtml = overItems.map(x => {
+        const match = trs.find(tr => {
+          const codeInput = tr.querySelector('.item-code');
+          return (codeInput.value || codeInput.textContent || '').trim().toLowerCase() === x.itemCode.toLowerCase();
+        });
+        const itemName = match ? match.querySelector('.item-name').value.trim() : '';
+        return `
+          <li style="margin-bottom: 6px;">
+            <span style="font-weight:700;">[${escapeHtml(x.itemCode)}]</span> 
+            ${escapeHtml(itemName)}: 
+            <b style="color: #dc2626; font-size: 15px;">${x.qty}</b> ชิ้น
+          </li>
+        `;
+      }).join('');
+      
+      const confirmHtml = `
+        <div style="font-weight: 700; color: #b45309; margin-bottom: 8px;">⚠️ พบรายการสินค้าที่มีจำนวนสั่งซื้อสูงผิดปกติ (ตั้งแต่ ${QTY_OVER_THRESHOLD} ชิ้นขึ้นไป):</div>
+        <ul style="padding-left: 20px; margin: 10px 0; max-height: 150px; overflow-y: auto; text-align: left;">
+          ${listHtml}
+        </ul>
+        <p style="margin-top: 14px; font-weight: 700; color: #334155; text-align: left;">คุณยืนยันที่จะสั่งซื้อรายการดังกล่าวจริงตามยอดนี้หรือไม่?</p>
+      `;
+      const ok = await showConfirmModal({ title: 'ยืนยันยอดสั่งซื้อสูงผิดปกติ', htmlMessage: confirmHtml });
+      if (!ok) return;
+    }
 
-  setLoading(true, 'กำลังบันทึกคำสั่งสินค้า...');
+    // 10. แจ้งเตือนส่งคำสั่งซื้อใกล้เวลา Cut-off (เหลือเวลาน้อยกว่า 15 นาที) เฉพาะวันปัจจุบัน
+    if (orderDate === todayIso()) {
+      const cutoffDiffMin = ((cutH * 60 + cutM) - (now.getHours() * 60 + now.getMinutes()));
+      if (cutoffDiffMin > 0 && cutoffDiffMin <= 15) {
+        const confirmHtml = `
+          <div style="font-weight: 700; color: #dc2626; margin-bottom: 8px;">⏰ คำสั่งซื้อใกล้หมดเวลาส่งของวันนี้แล้ว!</div>
+          <p style="text-align: left;">ขณะนี้เหลือเวลาอีกเพียง <b style="color: #dc2626; font-size: 18px;">${cutoffDiffMin}</b> นาที ก่อนปิดรับยอดออเดอร์ของวันนี้ (Cut-off เวลา <b>${cutoffStr} น.</b>)</p>
+          <p style="margin-top: 12px; color: #475569; text-align: left;">หากระบบบันทึกช้ากว่าเวลา Cut-off ออเดอร์นี้จะไม่ได้รับจัดส่งในรอบวันนี้ ยืนยันที่จะส่งโดยเร็วที่สุดใช่หรือไม่?</p>
+        `;
+        const ok = await showConfirmModal({ title: 'เตือนการส่งคำสั่งซื้อใกล้ปิดรอบ', htmlMessage: confirmHtml });
+        if (!ok) return;
+      }
+    }
 
-  try {
+    // 11. ตรวจสอบยอดรวมทั้งหมด (Total Qty / Total Lines) ที่เยอะมากเพื่อป้องกันความผิดพลาด
+    const totalQty = items.reduce((sum, x) => sum + x.qty, 0);
+    const totalLines = items.length;
+    if (totalQty >= 1000 || totalLines >= 50) {
+      const confirmHtml = `
+        <div style="font-weight: 700; color: #1e3a8a; margin-bottom: 8px;">📦 ตรวจสอบขนาดคำสั่งซื้อขนาดใหญ่</div>
+        <p style="text-align: left;">รายการสินค้าสั่งซื้อทั้งหมด: <b style="color: var(--owner, #1f8f4d);">${totalLines} รายการ</b></p>
+        <p style="text-align: left;">จำนวนรวมทุกชิ้น (QTY): <b style="color: var(--owner, #1f8f4d);">${totalQty.toLocaleString()} ชิ้น</b></p>
+        <p style="margin-top: 12px; color: #475569; text-align: left;">ออเดอร์นี้มียอดสั่งรวมค่อนข้างสูง กรุณาตรวจสอบให้แน่ใจว่าไม่ได้ป้อนจำนวนผิดช่อง หรือสั่งเบิ้ลรายการเดิม</p>
+        <p style="margin-top: 16px; font-weight: 700; color: #334155; text-align: left;">ยืนยันว่ายอดสั่งซื้อทั้งหมดถูกต้องแล้วใช่หรือไม่?</p>
+      `;
+      const ok = await showConfirmModal({ title: 'ยืนยันขนาดคำสั่งซื้อ', htmlMessage: confirmHtml });
+      if (!ok) return;
+    }
+
+    setLoading(true, 'กำลังบันทึกคำสั่งสินค้า...');
+
     const res = await apiRequest('submitOrder', {
       ownerKey: currentOwnerKey,
       orderDate,
@@ -2478,6 +2619,10 @@ async function submitOrder() {
     toast(err.message || err, 'error');
   } finally {
     isSubmittingOrder = false;
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'บันทึกคำสั่งสินค้า';
+    }
   }
 }
 
