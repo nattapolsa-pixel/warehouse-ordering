@@ -2295,9 +2295,12 @@ function setAnimatedText(id, value) {
 }
 
 async function submitOrder() {
+  if (isSubmittingOrder) return;
+  isSubmittingOrder = true;
   try {
-    await preloadFastLookupData(currentOwnerKey, true);
-  } catch (err) {}
+    try {
+      await preloadFastLookupData(currentOwnerKey, true);
+    } catch (err) {}
 
   resolvePendingItemInputs();
   const unresolvedRow = findUnresolvedSearchRow();
@@ -2473,6 +2476,8 @@ async function submitOrder() {
   } catch (err) {
     setLoading(false);
     toast(err.message || err, 'error');
+  } finally {
+    isSubmittingOrder = false;
   }
 }
 

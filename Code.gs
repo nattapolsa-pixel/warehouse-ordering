@@ -157,17 +157,6 @@ function apiGetConfig(payload) {
   };
 }
 
-/**
- * API: ค้นหาสาขาจากรหัสสาขา
- */
-function apiLookupBranch(branchCode) {
-  try {
-    const result = lookupBranch_(branchCode);
-    return { ok: true, branch: result };
-  } catch (err) {
-    return { ok: false, message: err.message || String(err) };
-  }
-}
 
 /**
  * API: ค้นหา Item จากรหัส Item ตาม Owner
@@ -1039,15 +1028,6 @@ function forceOrderSheetHeadersV9() {
   SpreadsheetApp.getActive().toast('จัดหัวตาราง Order v9 เรียบร้อย', 'Warehouse Ordering', 5);
 }
 
-function forceOrderSheetHeadersV8() {
-  return forceOrderSheetHeadersV9();
-}
-
-/**
- * v8: ซ่อมข้อมูลเก่าที่เคยบันทึกแบบมี Timestamp ปัจจุบันเกินมา 1 ช่อง
- * เงื่อนไขการซ่อม: A และ B เป็นวันที่, C เป็น Owner, D เป็น COMP_CODE
- * ระบบจะเลื่อนข้อมูลแถวนั้นไปทางซ้าย 1 ช่อง โดยไม่แตะแถวที่ถูกต้องแล้ว
- */
 function repairOldOrderRowsV8() {
   const ss = getSs_();
   let repaired = 0;
@@ -1090,14 +1070,7 @@ function repairOldOrderRowsV8() {
   SpreadsheetApp.getActive().toast('ซ่อมแถวเก่าแล้ว ' + repaired + ' แถว', 'Warehouse Ordering', 5);
 }
 
-// Backward compatible aliases เผื่อยังมีเมนู/Trigger เดิมค้างอยู่
-function forceOrderSheetHeadersV7() {
-  return forceOrderSheetHeadersV8();
-}
 
-function repairOldOrderRowsV7() {
-  return repairOldOrderRowsV8();
-}
 
 function clearSystemCache() {
   CacheService.getScriptCache().removeAll([
@@ -2242,22 +2215,15 @@ function handlePublicApi_(action, payload) {
         break;
 
       case 'getConfig':
-      case 'config':
         result = apiGetConfig(payload);
         break;
 
       case 'googleAdminLogin':
-      case 'adminGoogleLogin':
         result = apiGoogleAdminLogin(payload);
         break;
 
       case 'adminLogout':
-      case 'logoutAdmin':
         result = apiAdminLogout(payload);
-        break;
-
-      case 'lookupBranch':
-        result = apiLookupBranch(payload.branchCode || payload.code || '');
         break;
 
       case 'lookupItem':
@@ -2265,12 +2231,10 @@ function handlePublicApi_(action, payload) {
         break;
 
       case 'fastLookup':
-      case 'getFastLookupData':
         result = apiGetFastLookupData(payload.ownerKey || payload.owner || '');
         break;
 
       case 'validateOrder':
-      case 'validateOrderContext':
         result = apiValidateOrderContext(payload);
         break;
 
@@ -2279,12 +2243,10 @@ function handlePublicApi_(action, payload) {
         break;
 
       case 'history':
-      case 'recentOrders':
         result = apiGetRecentOrders(payload.ownerKey || payload.owner || 'PUN', payload.limit || 80, payload.branchCode || payload.branch || '', payload);
         break;
 
       case 'myOrders':
-      case 'branchOrders':
         result = apiGetMyOrders(payload.ownerKey || payload.owner || 'PUN', payload.branchCode || payload.branch || '', payload.limit || 80);
         break;
 
@@ -2298,22 +2260,18 @@ function handlePublicApi_(action, payload) {
         break;
 
       case 'cycleExport':
-      case 'exportCycle':
         result = apiGetCycleExport(payload.ownerKey || payload.owner || 'PUN', payload.cycleDate || payload.orderDate || payload.date || '', payload);
         break;
 
       case 'searchMasterItems':
-      case 'masterSearch':
         result = apiSearchMasterItems(payload.ownerKey || payload.owner || 'PUN', payload.keyword || payload.q || '', payload.limit || 30, payload);
         break;
 
       case 'upsertMasterItem':
-      case 'masterUpsert':
         result = apiUpsertMasterItem(payload.ownerKey || payload.owner || 'PUN', normalizeMasterItemPayloadForApi_(payload), payload);
         break;
 
       case 'logs':
-      case 'getLogs':
         result = apiGetLogs(payload.limit || 50, payload);
         break;
 
@@ -2326,7 +2284,6 @@ function handlePublicApi_(action, payload) {
             'getConfig',
             'googleAdminLogin',
             'adminLogout',
-            'lookupBranch',
             'lookupItem',
             'fastLookup',
             'validateOrder',
