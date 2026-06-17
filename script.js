@@ -44,6 +44,7 @@ let currentOwnerKey = 'PUN';
 let isSubmittingOrder = false;
 let editingDocumentNo = '';
 let editOrderModalOrder = null;
+let editOrderAddSelectedItem = null;
 let branchFavorites = new Set();
 let lastOrderData = null;
 let showCartOnly = false;
@@ -387,6 +388,9 @@ function closeConfirmModal(result) {
 function armEditOrderModal() {
   const modal = document.getElementById('editOrderModal');
   if (!modal) return;
+  const addInput = document.getElementById('editOrderAddItemInput');
+  const addQty = document.getElementById('editOrderAddQty');
+
   modal.addEventListener('click', event => {
     if (event.target === modal) closeEditOrderModal();
   });
@@ -395,6 +399,34 @@ function armEditOrderModal() {
       closeEditOrderModal();
     }
   });
+  document.addEventListener('click', event => {
+    if (!event.target.closest || event.target.closest('.edit-order-add-box')) return;
+    closeEditOrderAddSuggestions();
+  });
+
+  if (addInput) {
+    addInput.addEventListener('focus', () => showEditOrderAddSuggestions(addInput.value));
+    addInput.addEventListener('input', () => {
+      editOrderAddSelectedItem = null;
+      showEditOrderAddSuggestions(addInput.value);
+    });
+    addInput.addEventListener('keydown', event => {
+      if (handleEditOrderAddKeydown(event)) return;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addEditOrderSelectedItem();
+      }
+    });
+  }
+
+  if (addQty) {
+    addQty.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addEditOrderSelectedItem();
+      }
+    });
+  }
 }
 
 function initializeGoogleAdminSignIn() {
@@ -3524,6 +3556,14 @@ function openEditOrderModal(order) {
   setText('editOrderBranch', `${order.branchCode || '-'} ${order.branchName || ''}`.trim());
   setText('editOrderDate', order.orderDate || '-');
   setText('editOrderSubmitted', order.submittedAt || order.timestamp || '-');
+  setValue('editOrderAddItemInput', '');
+  setValue('editOrderAddQty', '1');
+  setText('editOrderAddHelper', 'ค้นหาจาก Master Item แล้วเลือกสินค้าเพื่อเพิ่มเข้าคำสั่งซื้อ');
+  editOrderAddSelectedItem = null;
+  closeEditOrderAddSuggestions();
+  preloadFastLookupData(ownerKey, true).catch(() => {
+    setText('editOrderAddHelper', 'โหลด Master Item ไม่สำเร็จ กรุณาลองค้นหาใหม่อีกครั้ง');
+  });
 
   renderEditOrderItems();
 
@@ -3541,6 +3581,8 @@ function closeEditOrderModal() {
     modal.setAttribute('aria-hidden', 'true');
   }
   editOrderModalOrder = null;
+  editOrderAddSelectedItem = null;
+  closeEditOrderAddSuggestions();
 }
 
 function renderEditOrderItems() {
@@ -3589,9 +3631,214 @@ function renderEditOrderItems() {
   updateEditOrderTotals();
 }
 
+function showEditOrderAddSuggestions(query) {
+  const box = document.getElementById('editOrderAddSuggestions');
+  const input = document.getElementById('editOrderAddItemInput');
+  if (!box || !input || !editOrderModalOrder) return;
+
+  const q = normalizeClientText(query);
+  if (!q) {
+    closeEditOrderAddSuggestions();
+    return;
+  }
+
+  if (!FAST_LOOKUP[currentOwnerKey]?.itemMap) {
+    box.innerHTML = '<div class="edit-order-add-option empty-option">กำลังโหลด Master Item...</div>';
+    box.classList.add('active');
+    preloadFastLookupData(currentOwnerKey, true)
+      .then(() => {
+        if (document.activeElement === input) showEditOrderAddSuggestions(input.value);
+      })
+      .catch(() => {
+        box.innerHTML = '<div class="edit-order-add-option empty-option">โหลด Master Item ไม่สำเร็จ</div>';
+        box.classList.add('active');
+      });
+    return;
+  }
+
+  const matches = getItemSuggestions(q, 10);
+  if (!matches.length) {
+    box.innerHTML = '<div class="edit-order-add-option empty-option">ไม่พบสินค้าใน Master Item</div>';
+    box.classList.add('active');
+    return;
+  }
+
+  box.innerHTML = matches.map((item, index) => `
+    <button type="button" class="edit-order-add-option${index === 0 ? ' active' : ''}" data-index="${index}" role="option">
+      <b>${escapeHtml(item.itemCode)}</b>
+      <span>${escapeHtml(item.itemName || '')}</span>
+      <small>${escapeHtml([item.itemSize, item.uom].filter(Boolean).join(' · '))}</small>
+    </button>
+  `).join('');
+
+  box.querySelectorAll('.edit-order-add-option[data-index]').forEach(option => {
+    option.addEventListener('mousedown', event => {
+      event.preventDefault();
+      const item = matches[Number(option.dataset.index || 0)];
+      if (item) chooseEditOrderAddItem(item);
+    });
+  });
+  box.classList.add('active');
+}
+
+function handleEditOrderAddKeydown(event) {
+  const box = document.getElementById('editOrderAddSuggestions');
+  if (!box || !box.classList.contains('active')) return false;
+
+  const options = [...box.querySelectorAll('.edit-order-add-option[data-index]')];
+  if (!options.length) {
+    if (event.key === 'Escape') {
+      closeEditOrderAddSuggestions();
+      return true;
+    }
+    return false;
+  }
+
+  const current = Math.max(options.findIndex(option => option.classList.contains('active')), 0);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const nextIndex = event.key === 'ArrowDown'
+      ? Math.min(current + 1, options.length - 1)
+      : Math.max(current - 1, 0);
+    options.forEach(option => option.classList.remove('active'));
+    options[nextIndex].classList.add('active');
+    options[nextIndex].scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    const item = getItemSuggestions(document.getElementById('editOrderAddItemInput')?.value || '', 10)[current];
+    if (item) {
+      chooseEditOrderAddItem(item);
+      addEditOrderSelectedItem();
+    }
+    return true;
+  }
+
+  if (event.key === 'Escape') {
+    closeEditOrderAddSuggestions();
+    return true;
+  }
+
+  return false;
+}
+
+function chooseEditOrderAddItem(item) {
+  editOrderAddSelectedItem = item ? { ...item } : null;
+  const input = document.getElementById('editOrderAddItemInput');
+  const qty = document.getElementById('editOrderAddQty');
+  if (input && item) {
+    input.value = `${item.itemCode || ''} - ${item.itemName || ''}`.trim();
+  }
+  setText('editOrderAddHelper', item
+    ? `${item.itemCode || '-'} · ${item.itemName || '-'}${item.itemSize ? ' · ' + item.itemSize : ''}${item.uom ? ' · ' + item.uom : ''}`
+    : 'ค้นหาจาก Master Item แล้วเลือกสินค้าเพื่อเพิ่มเข้าคำสั่งซื้อ');
+  closeEditOrderAddSuggestions();
+  if (qty) {
+    qty.focus();
+    qty.select();
+  }
+}
+
+function closeEditOrderAddSuggestions() {
+  const box = document.getElementById('editOrderAddSuggestions');
+  if (!box) return;
+  box.classList.remove('active');
+  box.innerHTML = '';
+}
+
+function findEditOrderAddItemFromInput() {
+  if (editOrderAddSelectedItem?.itemCode) return editOrderAddSelectedItem;
+
+  const input = document.getElementById('editOrderAddItemInput');
+  const raw = normalizeClientText(input?.value || '');
+  if (!raw) return null;
+
+  const q = normalizeSearchText(raw.split(' - ')[0] || raw);
+  const data = FAST_LOOKUP[currentOwnerKey];
+  if (!data?.itemMap) return null;
+
+  const exactCode = data.itemMap[q];
+  if (exactCode) return exactCode;
+
+  const exactName = getItemRowsForOwner().find(item => normalizeSearchText(item.itemName) === normalizeSearchText(raw));
+  if (exactName) return exactName;
+
+  return getItemSuggestions(raw, 1)[0] || null;
+}
+
+async function addEditOrderSelectedItem() {
+  if (!editOrderModalOrder) return;
+
+  const input = document.getElementById('editOrderAddItemInput');
+  const qtyInput = document.getElementById('editOrderAddQty');
+  const query = normalizeClientText(input?.value || '');
+  if (!query) {
+    input?.focus();
+    toast('กรุณาค้นหาและเลือกสินค้าที่ต้องการเพิ่ม', 'warn');
+    return;
+  }
+
+  if (!FAST_LOOKUP[currentOwnerKey]?.itemMap) {
+    setText('editOrderAddHelper', 'กำลังโหลด Master Item...');
+    try {
+      await preloadFastLookupData(currentOwnerKey, true);
+    } catch (err) {
+      setText('editOrderAddHelper', 'โหลด Master Item ไม่สำเร็จ');
+      toast(err.message || err, 'error');
+      return;
+    }
+  }
+
+  const item = findEditOrderAddItemFromInput();
+  if (!item?.itemCode) {
+    input?.focus();
+    setText('editOrderAddHelper', 'ไม่พบสินค้าใน Master Item กรุณาเลือกจากรายการแนะนำ');
+    toast('ไม่พบสินค้าใน Master Item', 'warn');
+    return;
+  }
+
+  const qty = parseQty(qtyInput?.value || 1);
+  if (!isNumericLike(qtyInput?.value || '') || qty <= 0) {
+    qtyInput?.focus();
+    toast('กรุณาระบุ QTY ที่ต้องการเพิ่มให้ถูกต้อง', 'warn');
+    return;
+  }
+
+  const itemKey = normalizeSearchText(item.itemCode);
+  const existing = editOrderModalOrder.items.find(row => normalizeSearchText(row.itemCode) === itemKey);
+  if (existing) {
+    existing.qty = parseQty(existing.qty) + qty;
+    renderEditOrderItems();
+    toast(`เพิ่ม QTY ให้รายการ ${item.itemCode} แล้ว`, 'success');
+  } else {
+    editOrderModalOrder.items.push({
+      itemNo: editOrderModalOrder.items.length + 1,
+      itemCode: item.itemCode || '',
+      itemName: item.itemName || '',
+      itemSize: item.itemSize || '',
+      uom: item.uom || '',
+      qty,
+      note: ''
+    });
+    renderEditOrderItems();
+    toast(`เพิ่มสินค้า ${item.itemCode} เข้าคำสั่งซื้อแล้ว`, 'success');
+  }
+
+  setValue('editOrderAddItemInput', '');
+  setValue('editOrderAddQty', '1');
+  setText('editOrderAddHelper', 'ค้นหาจาก Master Item แล้วเลือกสินค้าเพื่อเพิ่มเข้าคำสั่งซื้อ');
+  editOrderAddSelectedItem = null;
+  closeEditOrderAddSuggestions();
+  input?.focus();
+}
+
 function updateEditOrderItemQty(index, value) {
   if (!editOrderModalOrder?.items?.[index]) return;
   editOrderModalOrder.items[index].qty = normalizeQtyText(value);
+  const row = document.querySelector(`#editOrderItemsBody tr[data-index="${index}"]`);
+  if (row && parseQty(value) > 0) row.classList.remove('edit-order-row-invalid');
   updateEditOrderTotals();
 }
 

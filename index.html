@@ -604,6 +604,22 @@
         <div><span>วันที่บันทึก</span><b id="editOrderSubmitted">-</b></div>
       </div>
 
+      <div class="edit-order-add">
+        <div class="edit-order-add-search">
+          <label for="editOrderAddItemInput">เพิ่มรายการสินค้า</label>
+          <div class="edit-order-add-box">
+            <input type="text" id="editOrderAddItemInput" placeholder="ค้นหารหัส Item / ชื่อสินค้า / ขนาด" autocomplete="off">
+            <div class="edit-order-add-suggestions" id="editOrderAddSuggestions" role="listbox"></div>
+          </div>
+          <div class="helper" id="editOrderAddHelper">ค้นหาจาก Master Item แล้วเลือกสินค้าเพื่อเพิ่มเข้าคำสั่งซื้อ</div>
+        </div>
+        <div class="edit-order-add-qty">
+          <label for="editOrderAddQty">QTY</label>
+          <input type="number" id="editOrderAddQty" min="1" step="1" value="1">
+        </div>
+        <button class="btn primary edit-order-add-btn" type="button" onclick="addEditOrderSelectedItem()">เพิ่มสินค้า</button>
+      </div>
+
       <div class="edit-order-table-wrap">
         <table class="edit-order-table">
           <thead>

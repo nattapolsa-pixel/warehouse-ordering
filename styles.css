@@ -2529,6 +2529,121 @@ body.admin-mode .admin-status-pill {
   text-overflow: ellipsis;
 }
 
+.edit-order-add {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px 28px 0;
+}
+
+.edit-order-add label {
+  display: block;
+  margin-bottom: 7px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.edit-order-add-box {
+  position: relative;
+}
+
+.edit-order-add input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 10px 12px;
+  font-weight: 800;
+  outline: none;
+}
+
+.edit-order-add input:focus {
+  border-color: var(--owner);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--owner) 15%, transparent);
+}
+
+.edit-order-add-btn {
+  min-height: 44px;
+  border-radius: 8px !important;
+  white-space: nowrap;
+}
+
+.edit-order-add-suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: none;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+}
+
+.edit-order-add-suggestions.active {
+  display: block;
+}
+
+.edit-order-add-option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid #edf2f7;
+  background: #ffffff;
+  color: #0f172a;
+  text-align: left;
+  cursor: pointer;
+}
+
+.edit-order-add-option:last-child {
+  border-bottom: 0;
+}
+
+.edit-order-add-option:hover,
+.edit-order-add-option.active {
+  background: color-mix(in srgb, var(--owner) 8%, #ffffff);
+}
+
+.edit-order-add-option b {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.edit-order-add-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.edit-order-add-option small {
+  grid-column: 2;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.edit-order-add-option.empty-option {
+  display: block;
+  color: #64748b;
+  font-weight: 900;
+  cursor: default;
+}
+
 .edit-order-table-wrap {
   margin: 18px 28px;
   max-height: min(48vh, 470px);
@@ -2654,6 +2769,11 @@ body.admin-mode .admin-status-pill {
   .edit-order-summary {
     grid-template-columns: 1fr 1fr;
     padding: 12px 18px;
+  }
+
+  .edit-order-add {
+    grid-template-columns: 1fr;
+    padding: 14px 18px 0;
   }
 
   .edit-order-table-wrap {
@@ -4644,4 +4764,3 @@ div.empty {
   0% { transform: scale(1); }
   100% { transform: scale(1.03); }
 }
-
