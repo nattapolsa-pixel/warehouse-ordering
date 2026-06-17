@@ -322,6 +322,7 @@ function apiSubmitOrder(payload) {
     // ตรวจสอบข้อมูลออร์เดอร์เดิมเพื่อแก้ไข (Overwrite)
     const lastRow = sh.getLastRow();
     let isEdit = false;
+    const todayKey = getDateKey_(now);
     if (lastRow >= 2) {
       const existingValues = sh.getRange(2, 1, lastRow - 1, APP_CONFIG.orderHeaders.length).getValues();
       
@@ -329,6 +330,10 @@ function apiSubmitOrder(payload) {
       for (let i = 0; i < existingValues.length; i++) {
         const rowDoc = String(existingValues[i][5] || '').trim();
         if (rowDoc.toLowerCase() === documentNo.toLowerCase()) {
+          const rowSubmittedDateKey = getDateKey_(existingValues[i][17] || existingValues[i][0]);
+          if (rowSubmittedDateKey !== todayKey) {
+            throw new Error('ไม่สามารถแก้ไขคำสั่งซื้อนี้ได้ แก้ไขได้เฉพาะคำสั่งซื้อของวันนี้เท่านั้น');
+          }
           const rowStatus = String(existingValues[i][16] || '').trim();
           if (rowStatus !== 'รอดำเนินการ') {
             throw new Error('ไม่สามารถแก้ไขคำสั่งซื้อนี้ได้ เนื่องจากสถานะคือ "' + rowStatus + '" (ได้รับการดำเนินการแล้ว)');
@@ -480,6 +485,7 @@ function apiGetRecentOrders(ownerKey, limit, branchCode, payload) {
         return {
           timestamp: formatDateTime_(obj['วันที่สั่ง']),
           orderDate: formatDateTime_(obj['วันที่สั่ง']),
+          submittedAt: formatDateTime_(obj['วันที่และเวลาบันทึกข้อมูล']),
           owner: obj.Owner || '',
           compCode: obj.COMP_CODE || '',
           branchCode: obj['รหัสสาขา'] || '',

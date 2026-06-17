@@ -487,12 +487,11 @@
                     <th style="width:100px;">รอบสั่ง</th>
                     <th style="width:80px;">รายการ</th>
                     <th style="width:80px;">QTY</th>
-                    <th>รายการสินค้า (ย่อ)</th>
                     <th style="width:90px; text-align: center;">จัดการ</th>
                   </tr>
                 </thead>
                 <tbody id="myOrdersBody">
-                  <tr><td colspan="8"><div class="empty">กรุณากดค้นหาเพื่อดูประวัติการสั่งสินค้า</div></td></tr>
+                  <tr><td colspan="7"><div class="empty">กรุณากดค้นหาเพื่อดูประวัติการสั่งสินค้า</div></td></tr>
                 </tbody>
               </table>
             </div>
@@ -582,6 +581,57 @@
         <button class="btn" type="button" id="confirmModalCancelBtn" onclick="closeConfirmModal(false)" style="background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; min-height: 48px;">ยกเลิก</button>
         <button class="btn primary" type="button" onclick="closeConfirmModal(true)" id="confirmModalBtn" style="min-height: 48px;">ยืนยัน</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Edit Order Modal -->
+  <div class="admin-modal edit-order-modal" id="editOrderModal" aria-hidden="true">
+    <div class="admin-modal-card edit-order-modal-card">
+      <button class="admin-modal-close edit-order-close" type="button" onclick="closeEditOrderModal()" aria-label="ปิด">×</button>
+      <header class="edit-order-modal-head">
+        <div>
+          <span class="edit-order-kicker" id="editOrderOwner">ORDER</span>
+          <h2 id="editOrderModalTitle">แก้ไขคำสั่งซื้อ</h2>
+          <p id="editOrderModalSubtitle">-</p>
+        </div>
+        <div class="edit-order-status" id="editOrderStatus">รอดำเนินการ</div>
+      </header>
+
+      <div class="edit-order-summary" id="editOrderSummary">
+        <div><span>เลขเอกสาร</span><b id="editOrderDocNo">-</b></div>
+        <div><span>สาขา</span><b id="editOrderBranch">-</b></div>
+        <div><span>วันที่สั่ง</span><b id="editOrderDate">-</b></div>
+        <div><span>วันที่บันทึก</span><b id="editOrderSubmitted">-</b></div>
+      </div>
+
+      <div class="edit-order-table-wrap">
+        <table class="edit-order-table">
+          <thead>
+            <tr>
+              <th style="width:58px;">#</th>
+              <th style="width:140px;">รหัส Item</th>
+              <th>ชื่อ Item</th>
+              <th style="width:150px;">ขนาด</th>
+              <th style="width:90px;">UOM</th>
+              <th style="width:130px;">QTY</th>
+              <th style="width:220px;">หมายเหตุ</th>
+              <th style="width:72px; text-align:center;">ลบ</th>
+            </tr>
+          </thead>
+          <tbody id="editOrderItemsBody"></tbody>
+        </table>
+      </div>
+
+      <footer class="edit-order-footer">
+        <div class="edit-order-totals">
+          <span>รายการ <b id="editOrderLineCount">0</b></span>
+          <span>QTY รวม <b id="editOrderTotalQty">0</b></span>
+        </div>
+        <div class="edit-order-actions">
+          <button class="btn" type="button" onclick="closeEditOrderModal()">ยกเลิก</button>
+          <button class="btn primary" type="button" id="editOrderSaveBtn" onclick="submitEditOrderModal()">บันทึกการแก้ไข</button>
+        </div>
+      </footer>
     </div>
   </div>
 

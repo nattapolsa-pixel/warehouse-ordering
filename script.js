@@ -43,6 +43,7 @@ const ADMIN_EXPIRES_STORAGE_KEY = 'warehouseOrderingAdminExpiresAt';
 let currentOwnerKey = 'PUN';
 let isSubmittingOrder = false;
 let editingDocumentNo = '';
+let editOrderModalOrder = null;
 let branchFavorites = new Set();
 let lastOrderData = null;
 let showCartOnly = false;
@@ -65,6 +66,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   armItemTableFilter();
   armAdminLoginModal();
   armConfirmModal();
+  armEditOrderModal();
   startRealtimeClock();
   const orderDate = document.getElementById('orderDate');
   if (orderDate) orderDate.value = todayIso();
@@ -380,6 +382,19 @@ function closeConfirmModal(result) {
     confirmModalResolver(result);
     confirmModalResolver = null;
   }
+}
+
+function armEditOrderModal() {
+  const modal = document.getElementById('editOrderModal');
+  if (!modal) return;
+  modal.addEventListener('click', event => {
+    if (event.target === modal) closeEditOrderModal();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && modal.classList.contains('active')) {
+      closeEditOrderModal();
+    }
+  });
 }
 
 function initializeGoogleAdminSignIn() {
@@ -955,16 +970,19 @@ function renderMyOrders(orders, summary, branchCode) {
   setText('myOrdersHint', `รหัสสาขา ${branchCode} · แสดงคำสั่งซื้อล่าสุดของ Owner ${currentOwnerKey}`);
 
   if (!orders.length) {
-    body.innerHTML = '<tr><td colspan="8"><div class="empty">ยังไม่พบคำสั่งซื้อของสาขานี้</div></td></tr>';
+    body.innerHTML = '<tr><td colspan="7"><div class="empty">ยังไม่พบคำสั่งซื้อของสาขานี้</div></td></tr>';
     return;
   }
 
   body.innerHTML = orders.map(order => {
     const statusText = String(order.status || '').trim();
-    const canEdit = statusText === 'รอดำเนินการ';
+    const canEdit = isOrderEditableToday(order);
+    const disabledEditTitle = statusText !== 'รอดำเนินการ'
+      ? `ไม่สามารถแก้ไขได้ เนื่องจากสถานะคือ ${statusText || '-'}`
+      : `แก้ไขได้เฉพาะคำสั่งซื้อของวันนี้เท่านั้น (วันนี้ ${todayIso()})`;
     const editBtn = canEdit 
       ? `<button class="btn primary btn-xs edit-order-btn" style="padding: 4px 8px; font-size: 12px;" onclick="editOrder('${escapeAttr(order.documentNo)}')">แก้ไข</button>`
-      : `<button class="btn btn-xs" style="padding: 4px 8px; font-size: 12px;" disabled title="ไม่สามารถแก้ไขได้ เนื่องจากออร์เดอร์ได้รับการดำเนินการแล้ว">แก้ไข</button>`;
+      : `<button class="btn btn-xs" style="padding: 4px 8px; font-size: 12px;" disabled title="${escapeAttr(disabledEditTitle)}">แก้ไข</button>`;
 
     return `
       <tr>
@@ -974,7 +992,6 @@ function renderMyOrders(orders, summary, branchCode) {
         <td>${cycleBadge(order.cycleStatus || '')}</td>
         <td>${escapeHtml(numberFmt(order.totalRows || order.items?.length || 0))}</td>
         <td>${escapeHtml(numberFmt(order.totalQty || 0))}</td>
-        <td>${escapeHtml(formatOrderItems(order.items || []))}</td>
         <td style="text-align: center;">${editBtn}</td>
       </tr>
     `;
@@ -989,6 +1006,7 @@ function groupHistoryRowsToOrders(rows) {
       map[doc] = {
         documentNo: doc,
         orderDate: row.orderDate || row.timestamp || '',
+        submittedAt: row.submittedAt || row.timestamp || row.orderDate || '',
         status: row.status || '',
         cycleStatus: row.cycleStatus || '',
         owner: row.owner || '',
@@ -1014,16 +1032,6 @@ function groupHistoryRowsToOrders(rows) {
     });
   });
   return Object.values(map);
-}
-
-function formatOrderItems(items) {
-  const text = (items || [])
-    .slice(0, 4)
-    .map(item => `${item.itemCode || ''}${item.itemName ? ' · ' + item.itemName : ''}${item.qty ? ' x' + item.qty : ''}`)
-    .filter(Boolean)
-    .join(' / ');
-  const more = items && items.length > 4 ? ` +${items.length - 4} รายการ` : '';
-  return truncate(text + more, 120);
 }
 
 function formatCycleDays(cycleText) {
@@ -3481,84 +3489,254 @@ async function editOrder(documentNo) {
   if (status !== 'รอดำเนินการ') {
     return toast('ไม่สามารถแก้ไขออร์เดอร์นี้ได้ เนื่องจากสถานะคือ ' + status, 'warn');
   }
+  if (!isOrderEditableToday(order)) {
+    return toast('ไม่สามารถแก้ไขออร์เดอร์นี้ได้ แก้ไขได้เฉพาะคำสั่งซื้อของวันนี้เท่านั้น', 'warn');
+  }
 
-  setLoading(true, 'กำลังโหลดข้อมูลคำสั่งซื้อ...');
+  openEditOrderModal(order);
+}
+
+function openEditOrderModal(order) {
+  const ownerKey = order.owner || currentOwnerKey;
+  currentOwnerKey = ownerKey;
+  applyOwnerStyle(ownerKey);
+
+  editOrderModalOrder = {
+    ...order,
+    owner: ownerKey,
+    items: (order.items || []).map((item, index) => ({
+      itemNo: item.itemNo || index + 1,
+      itemCode: item.itemCode || '',
+      itemName: item.itemName || '',
+      itemSize: item.itemSize || '',
+      uom: item.uom || '',
+      qty: item.qty || '',
+      note: item.note || ''
+    }))
+  };
+
+  const ownerConfig = OWNERS[ownerKey] || OWNERS.PUN;
+  setText('editOrderOwner', ownerConfig.label || ownerKey);
+  setText('editOrderModalTitle', `แก้ไขคำสั่งซื้อ ${order.documentNo || ''}`);
+  setText('editOrderModalSubtitle', `${order.branchCode || '-'} · ${order.branchName || '-'}`);
+  setText('editOrderStatus', order.status || 'รอดำเนินการ');
+  setText('editOrderDocNo', order.documentNo || '-');
+  setText('editOrderBranch', `${order.branchCode || '-'} ${order.branchName || ''}`.trim());
+  setText('editOrderDate', order.orderDate || '-');
+  setText('editOrderSubmitted', order.submittedAt || order.timestamp || '-');
+
+  renderEditOrderItems();
+
+  const modal = document.getElementById('editOrderModal');
+  if (modal) {
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+  }
+}
+
+function closeEditOrderModal() {
+  const modal = document.getElementById('editOrderModal');
+  if (modal) {
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+  editOrderModalOrder = null;
+}
+
+function renderEditOrderItems() {
+  const body = document.getElementById('editOrderItemsBody');
+  if (!body || !editOrderModalOrder) return;
+
+  const items = editOrderModalOrder.items || [];
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="8"><div class="edit-order-empty">ไม่มีรายการสินค้าในคำสั่งซื้อนี้</div></td></tr>';
+    updateEditOrderTotals();
+    return;
+  }
+
+  body.innerHTML = items.map((item, index) => `
+    <tr data-index="${index}">
+      <td class="edit-order-row-no">${index + 1}</td>
+      <td><b>${escapeHtml(item.itemCode || '-')}</b></td>
+      <td>${escapeHtml(item.itemName || '-')}</td>
+      <td>${escapeHtml(item.itemSize || '-')}</td>
+      <td>${escapeHtml(item.uom || '-')}</td>
+      <td>
+        <input
+          class="edit-order-input edit-order-qty"
+          type="number"
+          min="1"
+          step="1"
+          value="${escapeAttr(item.qty || '')}"
+          oninput="updateEditOrderItemQty(${index}, this.value)"
+          aria-label="QTY ${escapeAttr(item.itemCode || index + 1)}"
+        >
+      </td>
+      <td>
+        <input
+          class="edit-order-input edit-order-note"
+          type="text"
+          value="${escapeAttr(item.note || '')}"
+          oninput="updateEditOrderItemNote(${index}, this.value)"
+          aria-label="หมายเหตุ ${escapeAttr(item.itemCode || index + 1)}"
+        >
+      </td>
+      <td style="text-align:center;">
+        <button class="row-delete edit-order-remove" type="button" onclick="removeEditOrderItem(${index})" aria-label="ลบรายการ ${escapeAttr(item.itemCode || index + 1)}">×</button>
+      </td>
+    </tr>
+  `).join('');
+  updateEditOrderTotals();
+}
+
+function updateEditOrderItemQty(index, value) {
+  if (!editOrderModalOrder?.items?.[index]) return;
+  editOrderModalOrder.items[index].qty = normalizeQtyText(value);
+  updateEditOrderTotals();
+}
+
+function updateEditOrderItemNote(index, value) {
+  if (!editOrderModalOrder?.items?.[index]) return;
+  editOrderModalOrder.items[index].note = value || '';
+}
+
+function removeEditOrderItem(index) {
+  if (!editOrderModalOrder?.items) return;
+  editOrderModalOrder.items.splice(index, 1);
+  renderEditOrderItems();
+}
+
+function syncEditOrderDraftFromDom() {
+  if (!editOrderModalOrder) return;
+  document.querySelectorAll('#editOrderItemsBody tr[data-index]').forEach(row => {
+    const index = Number(row.dataset.index);
+    const item = editOrderModalOrder.items?.[index];
+    if (!item) return;
+    item.qty = normalizeQtyText(row.querySelector('.edit-order-qty')?.value || '');
+    item.note = row.querySelector('.edit-order-note')?.value || '';
+  });
+}
+
+function updateEditOrderTotals() {
+  if (!editOrderModalOrder) {
+    setText('editOrderLineCount', '0');
+    setText('editOrderTotalQty', '0');
+    return;
+  }
+
+  const validItems = (editOrderModalOrder.items || []).filter(item => parseQty(item.qty) > 0);
+  const totalQty = validItems.reduce((sum, item) => sum + parseQty(item.qty), 0);
+  setText('editOrderLineCount', numberFmt(validItems.length));
+  setText('editOrderTotalQty', numberFmt(totalQty));
+}
+
+function getOrderTargetDateIso(order) {
+  return parseDateThToIso(order?.orderDate || order?.timestamp || '');
+}
+
+async function submitEditOrderModal() {
+  if (!editOrderModalOrder) return;
+
+  if (!isOrderEditableToday(editOrderModalOrder)) {
+    toast('ไม่สามารถแก้ไขออร์เดอร์นี้ได้ แก้ไขได้เฉพาะคำสั่งซื้อของวันนี้เท่านั้น', 'warn');
+    closeEditOrderModal();
+    return;
+  }
+
+  syncEditOrderDraftFromDom();
+
+  const invalidIndex = (editOrderModalOrder.items || []).findIndex(item => {
+    const qtyText = normalizeQtyText(item.qty);
+    return !item.itemCode || !isNumericLike(qtyText) || parseQty(qtyText) <= 0;
+  });
+  if (invalidIndex >= 0) {
+    const row = document.querySelector(`#editOrderItemsBody tr[data-index="${invalidIndex}"]`);
+    row?.classList.add('edit-order-row-invalid');
+    row?.querySelector('.edit-order-qty')?.focus();
+    toast('กรุณาตรวจสอบจำนวนสินค้าใน popup ให้ถูกต้องก่อนบันทึก', 'warn');
+    return;
+  }
+
+  const items = (editOrderModalOrder.items || []).map(item => ({
+    itemCode: item.itemCode,
+    qty: parseQty(item.qty),
+    note: item.note || ''
+  }));
+
+  if (!items.length) {
+    toast('ต้องมีรายการสินค้าอย่างน้อย 1 รายการ', 'warn');
+    return;
+  }
+
+  const orderDate = getOrderTargetDateIso(editOrderModalOrder);
+  if (!orderDate) {
+    toast('ไม่พบวันที่สั่งของออร์เดอร์นี้', 'error');
+    return;
+  }
+
+  let ignoreCutoff = false;
+  const ownerConfig = OWNERS[editOrderModalOrder.owner || currentOwnerKey] || OWNERS.PUN;
+  const cutoffStr = ownerConfig.cutoffTime || '16:00';
+  const [cutH, cutM] = cutoffStr.split(':').map(Number);
+  const now = new Date();
+  if (orderDate === todayIso() && (now.getHours() > cutH || (now.getHours() === cutH && now.getMinutes() > cutM))) {
+    const ok = await showConfirmModal({
+      title: 'ยืนยันแก้ไขหลังเวลา Cut-off',
+      htmlMessage: `<p>ขณะนี้เลยเวลา Cut-off (${escapeHtml(cutoffStr)} น.) ของวันนี้แล้ว ต้องการบันทึกการแก้ไขคำสั่งซื้อนี้ต่อหรือไม่?</p>`,
+      confirmText: 'ยืนยันบันทึก',
+      cancelText: 'ยกเลิก'
+    });
+    if (!ok) return;
+    ignoreCutoff = true;
+  }
+
+  const saveBtn = document.getElementById('editOrderSaveBtn');
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'กำลังบันทึก...';
+  }
+  setLoading(true, 'กำลังบันทึกการแก้ไข...');
+
   try {
-    currentOwnerKey = order.owner || currentOwnerKey;
-    applyOwnerStyle(currentOwnerKey);
-
-    clearOrderContext();
-    editingDocumentNo = order.documentNo || documentNo;
-    setValue('owner', currentOwnerKey);
-    const ownerConfig = OWNERS[currentOwnerKey] || OWNERS.PUN;
-    setValue('compCode', ownerConfig.compCode);
-
-    setText('orderTitle', currentOwnerKey === 'PUN' ? 'ฟอร์มสั่งสินค้า Punthai' : 'ฟอร์มสั่งสินค้า Coffee World');
-    setText('orderSubtitle', `${ownerConfig.label || ownerConfig.key} · แก้ไขคำสั่งซื้อ ${documentNo}`);
-
-    // Set order date
-    const isoDate = parseDateThToIso(order.orderDate);
-    setValue('orderDate', isoDate);
-
-    // Set branch
-    const exactBranch = getExactBranchMatch(order.branchCode);
-    if (exactBranch) {
-      chooseBranchSuggestion(exactBranch, { keepFocus: true, quiet: true });
-    } else {
-      setValue('branchCode', order.branchCode);
-      setValue('branchName', order.branchName || '');
-    }
-    if (order.branchEmail) setValue('branchEmail', order.branchEmail);
-    if (order.branchZone) setValue('branchZone', order.branchZone);
-    setValue('documentNo', order.documentNo);
-
-    // Load master items
-    await loadMasterItemsIntoTable(currentOwnerKey);
-
-    // Populate quantities and notes
-    const rows = [...document.querySelectorAll('#itemBody tr')];
-    let matchedCount = 0;
-
-    (order.items || []).forEach(item => {
-      const targetTr = rows.find(tr => {
-        const codeEl = tr.querySelector('.item-code');
-        const code = (codeEl.value || codeEl.textContent || '').trim().toLowerCase();
-        return code === String(item.itemCode || '').trim().toLowerCase();
-      });
-
-      if (targetTr) {
-        const qtyEl = targetTr.querySelector('.item-qty');
-        const noteEl = targetTr.querySelector('.item-note');
-        if (qtyEl) qtyEl.value = item.qty || '';
-        if (noteEl) noteEl.value = item.note || '';
-        matchedCount++;
-      } else {
-        // If not found in preloaded master list, we can add it as a new row
-        addItemRow({
-          itemCode: item.itemCode,
-          itemName: item.itemName,
-          itemSize: item.itemSize,
-          uom: item.uom,
-          qty: item.qty,
-          note: item.note,
-          isPreloaded: false
-        });
-      }
+    const res = await apiRequest('submitOrder', {
+      ownerKey: editOrderModalOrder.owner || currentOwnerKey,
+      orderDate,
+      branchCode: editOrderModalOrder.branchCode,
+      branchEmail: editOrderModalOrder.branchEmail || '',
+      branchZone: editOrderModalOrder.branchZone || '',
+      ignoreCutoff,
+      items
     });
 
-    updateItemSummary();
-    openSection('order');
     setLoading(false);
-    toast(`โหลดคำสั่งซื้อ ${documentNo} เพื่อแก้ไขสำเร็จ`, 'success');
+    if (!res.ok) {
+      toast(res.message || 'บันทึกการแก้ไขไม่สำเร็จ', 'error');
+      return;
+    }
+
+    const docNo = editOrderModalOrder.documentNo || res.result?.documentNo || '';
+    closeEditOrderModal();
+    toast(`บันทึกการแก้ไข ${docNo} เรียบร้อย`, 'success');
+    launchConfetti();
+    loadMyOrders({ quiet: true });
   } catch (err) {
     setLoading(false);
     toast(err.message || err, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'บันทึกการแก้ไข';
+    }
   }
 }
 
 function parseDateThToIso(dateStr) {
   if (!dateStr) return '';
-  const parts = dateStr.split(' ')[0].split('/');
+  const text = String(dateStr).trim();
+  const isoMatch = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoMatch) return isoMatch[1];
+
+  const parts = text.split(' ')[0].split('/');
   if (parts.length === 3) {
     const day = parts[0].padStart(2, '0');
     const month = parts[1].padStart(2, '0');
@@ -3566,6 +3744,15 @@ function parseDateThToIso(dateStr) {
     return `${year}-${month}-${day}`;
   }
   return dateStr;
+}
+
+function getOrderSubmittedDateIso(order) {
+  return parseDateThToIso(order?.submittedAt || order?.orderDate || order?.timestamp || '');
+}
+
+function isOrderEditableToday(order) {
+  const status = String(order?.status || '').trim();
+  return status === 'รอดำเนินการ' && getOrderSubmittedDateIso(order) === todayIso();
 }
 
 /* =========================================================
